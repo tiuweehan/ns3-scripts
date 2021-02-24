@@ -1,0 +1,5 @@
+TcpCubic Flow 2 (10.1.1.1 -> 10.2.1.1)
+Net Packet Lost: 11
+Packet Lost due to buffer overflow: 0
+Packet Lost due to Congestion: 11
+Max throughput: 3837.85

@@ -109,9 +109,12 @@ void ClientApp::SendPacket() {
 	Ptr<Packet> packet = Create<Packet>(mPacketSize);
 	mSocket->Send(packet);
 
-	if(++mPacketsSent < mNPackets) {
-		ScheduleTx();
-	}
+	// if(++mPacketsSent < mNPackets) {
+	// 	ScheduleTx();
+	// }
+
+  mPacketsSent++;
+  ScheduleTx();
 }
 
 void ClientApp::ScheduleTx() {
@@ -124,53 +127,13 @@ void ClientApp::ScheduleTx() {
 	}
 }
 
-static void CwndChange(Ptr<OutputStreamWrapper> stream, double startTime, uint oldCwnd, uint newCwnd) {
-	*stream->GetStream() << Simulator::Now ().GetSeconds () - startTime << "\t" << newCwnd << std::endl;
+std::map<std::string, uint64_t> mapPacketsReceivedIPV4;
+
+void ReceivedPacket(std::string context, Ptr<const Packet> p, const Address& addr){
 }
 
-std::map<uint, uint> mapDrop;
-static void packetDrop(Ptr<OutputStreamWrapper> stream, double startTime, uint myId) {
-	*stream->GetStream() << Simulator::Now ().GetSeconds () - startTime << "\t" << std::endl;
-	if(mapDrop.find(myId) == mapDrop.end()) {
-		mapDrop[myId] = 0;
-	}
-	mapDrop[myId]++;
-}
-
-
-std::map<Address, double> mapBytesReceived;
-std::map<std::string, double> mapBytesReceivedIPV4, mapMaxThroughput;
-static double lastTimePrint = 0, lastTimePrintIPV4 = 0;
-double printGap = 0;
-
-void ReceivedPacket(Ptr<OutputStreamWrapper> stream, double startTime, std::string context, Ptr<const Packet> p, const Address& addr){
-	double timeNow = Simulator::Now().GetSeconds();
-
-	if(mapBytesReceived.find(addr) == mapBytesReceived.end())
-		mapBytesReceived[addr] = 0;
-	mapBytesReceived[addr] += p->GetSize();
-	double kbps_ = (((mapBytesReceived[addr] * 8.0) / 1024)/(timeNow-startTime));
-	if(timeNow - lastTimePrint >= printGap) {
-		lastTimePrint = timeNow;
-		*stream->GetStream() << timeNow-startTime << "\t" <<  kbps_ << std::endl;
-	}
-}
-
-void ReceivedPacketIPV4(Ptr<OutputStreamWrapper> stream, double startTime, std::string context, Ptr<const Packet> p, Ptr<Ipv4> ipv4, uint interface) {
-	double timeNow = Simulator::Now().GetSeconds();
-
-	if(mapBytesReceivedIPV4.find(context) == mapBytesReceivedIPV4.end())
-		mapBytesReceivedIPV4[context] = 0;
-	if(mapMaxThroughput.find(context) == mapMaxThroughput.end())
-		mapMaxThroughput[context] = 0;
-	mapBytesReceivedIPV4[context] += p->GetSize();
-	double kbps_ = (((mapBytesReceivedIPV4[context] * 8.0) / 1024)/(timeNow-startTime));
-	if(timeNow - lastTimePrintIPV4 >= printGap) {
-		lastTimePrintIPV4 = timeNow;
-		*stream->GetStream() << timeNow-startTime << "\t" <<  kbps_ << std::endl;
-		if(mapMaxThroughput[context] < kbps_)
-			mapMaxThroughput[context] = kbps_;
-	}
+void ReceivedPacketIPV4(std::string context, Ptr<const Packet> p, Ptr<Ipv4> ipv4, uint interface) {
+  mapPacketsReceivedIPV4[context]++;
 }
 
 
@@ -188,10 +151,8 @@ Ptr<Socket> uniFlow(Address sinkAddress,
 					double appStopTime) {
 
 	if(tcpVariant.compare("TcpBbr") == 0) {
-    // Commented because TcpReno does not exist in ns-3.27
 		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
 	} else if(tcpVariant.compare("TcpCubic") == 0) {
-    // Commented because TcpReno does not exist in ns-3.27
 		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
 	} else {
 		fprintf(stderr, "Invalid TCP version\n");
@@ -224,9 +185,9 @@ int main(int argc, char **argv) {
 	uint queueSizeHR = (100000*20)/packetSize;
 	uint queueSizeRR = (10000*50)/packetSize;
 
-  uint nCubic = 1;
-  uint nBbr = 1;
-	uint numSender = nCubic + nBbr;
+  uint nBbr = 3;
+  uint nCubic = 3;
+	uint numSender = nBbr + nCubic;
 
 	double errorP = ERROR;
 
@@ -246,7 +207,7 @@ int main(int argc, char **argv) {
 	p2pRR.SetChannelAttribute("Delay", StringValue(latencyRR));
 	p2pRR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
 
-	//Adding some errorrate
+	//Adding some error rate
 	std::cout << "Adding some error rate" << std::endl;
 	Ptr<RateErrorModel> em = CreateObjectWithAttributes<RateErrorModel> ("ErrorRate", DoubleValue (errorP));
 
@@ -308,55 +269,38 @@ int main(int argc, char **argv) {
 		rightRouterIFCs.Add(receiverIFC.Get(1));
 		receiverIP.NewNetwork();
 	}
-	/********************************************************************
-	PART (b)
-	********************************************************************/
-	/********************************************************************
-		1)start 2 other flows while one is progress
-		and then measure throughput and CWND of each flow at steady state
-		2)Also find the max throuhput per flow
-	********************************************************************/
-	double durationGap = 100;
+
+	double durationGap = 120;
 	double flowStart = 0;
 	uint port = 9000;
 	uint numPackets = 10000000;
 	std::string transferSpeed = "400Mbps";
-		
 	
 	//TCP BBR
-	AsciiTraceHelper asciiTraceHelper;
-	Ptr<OutputStreamWrapper> stream1CWND = asciiTraceHelper.CreateFileStream("application_6_h1_h4_b.cwnd");
-	Ptr<OutputStreamWrapper> stream1PD = asciiTraceHelper.CreateFileStream("application_6_h1_h4_b.congestion_loss");
-	Ptr<OutputStreamWrapper> stream1TP = asciiTraceHelper.CreateFileStream("application_6_h1_h4_b.tp");
-	Ptr<OutputStreamWrapper> stream1GP = asciiTraceHelper.CreateFileStream("application_6_h1_h4_b.gp");
-	Ptr<Socket> ns3TcpSocket1 = uniFlow(InetSocketAddress(receiverIFCs.GetAddress(0), port), port, "TcpBbr", senders.Get(0), receivers.Get(0), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
-	ns3TcpSocket1->TraceConnectWithoutContext("CongestionWindow", MakeBoundCallback (&CwndChange, stream1CWND, 0));
-	ns3TcpSocket1->TraceConnectWithoutContext("Drop", MakeBoundCallback (&packetDrop, stream1PD, 0, 1));
+  std::cout << "Creating TCP BBR Sockets" << std::endl;
+  for (uint i = 0; i < nBbr; i++) {
+    uniFlow(InetSocketAddress(receiverIFCs.GetAddress(i), port), port, "TcpBbr", senders.Get(i), receivers.Get(i), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
 
-
-	std::stringstream sink;
-	std::stringstream sink_;
-  sink << "/NodeList/" << receivers.Get(0)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
-	Config::Connect(sink.str(), MakeBoundCallback(&ReceivedPacket, stream1GP, 0));
-  sink_ << "/NodeList/" << receivers.Get(0)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
-	Config::Connect(sink_.str(), MakeBoundCallback(&ReceivedPacketIPV4, stream1TP, 0));
+    std::stringstream sink;
+    std::stringstream sink_;
+    sink << "/NodeList/" << receivers.Get(i)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
+    Config::Connect(sink.str(), MakeCallback(&ReceivedPacket));
+    sink_ << "/NodeList/" << receivers.Get(i)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
+    Config::Connect(sink_.str(), MakeCallback(&ReceivedPacketIPV4));
+  }
 
 	//TCP CUBIC
-	std::cout << "TCP Fack from H3 to H6" << std::endl;
-	Ptr<OutputStreamWrapper> stream3CWND = asciiTraceHelper.CreateFileStream("application_6_h3_h6_b.cwnd");
-	Ptr<OutputStreamWrapper> stream3PD = asciiTraceHelper.CreateFileStream("application_6_h3_h6_b.congestion_loss");
-	Ptr<OutputStreamWrapper> stream3TP = asciiTraceHelper.CreateFileStream("application_6_h3_h6_b.tp");
-	Ptr<OutputStreamWrapper> stream3GP = asciiTraceHelper.CreateFileStream("application_6_h3_h6_b.gp");
-	Ptr<Socket> ns3TcpSocket3 = uniFlow(InetSocketAddress(receiverIFCs.GetAddress(1), port), port, "TcpCubic", senders.Get(1), receivers.Get(1), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
-	ns3TcpSocket3->TraceConnectWithoutContext("CongestionWindow", MakeBoundCallback (&CwndChange, stream3CWND, 0));
-	ns3TcpSocket3->TraceConnectWithoutContext("Drop", MakeBoundCallback (&packetDrop, stream3PD, 0, 2));
+  std::cout << "Creating TCP CUBIC Sockets" << std::endl;
+  for (uint i = nBbr; i < nBbr + nCubic; i++) {
+    uniFlow(InetSocketAddress(receiverIFCs.GetAddress(i), port), port, "TcpCubic", senders.Get(i), receivers.Get(i), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
 
-  sink.str("");
-  sink_.str("");
-  sink << "/NodeList/" << receivers.Get(1)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
-	Config::Connect(sink.str(), MakeBoundCallback(&ReceivedPacket, stream3GP, 0));
-  sink_ << "/NodeList/" << receivers.Get(1)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
-	Config::Connect(sink_.str(), MakeBoundCallback(&ReceivedPacketIPV4, stream3TP, 0));
+    std::stringstream sink;
+    std::stringstream sink_;
+    sink << "/NodeList/" << receivers.Get(i)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
+    Config::Connect(sink.str(), MakeCallback(&ReceivedPacket));
+    sink_ << "/NodeList/" << receivers.Get(i)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
+    Config::Connect(sink_.str(), MakeCallback(&ReceivedPacketIPV4));
+  }
 
 	//p2pHR.EnablePcapAll("application_6_HR_a");
 	//p2pRR.EnablePcapAll("application_6_RR_a");
@@ -365,46 +309,14 @@ int main(int argc, char **argv) {
 	std::cout << "Turning on Static Global Routing" << std::endl;
 	Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-	std::cout << "Monitoring flows..." << std::endl;
-	Ptr<FlowMonitor> flowmon;
-	FlowMonitorHelper flowmonHelper;
-	flowmon = flowmonHelper.InstallAll();
 	Simulator::Stop(Seconds(durationGap+flowStart));
 	Simulator::Run();
-	flowmon->CheckForLostPackets();
 
-	//Ptr<OutputStreamWrapper> streamTP = asciiTraceHelper.CreateFileStream("application_6_b.tp");
-	Ptr<Ipv4FlowClassifier> classifier = DynamicCast<Ipv4FlowClassifier>(flowmonHelper.GetClassifier());
-	std::map<FlowId, FlowMonitor::FlowStats> stats = flowmon->GetFlowStats();
-	for (std::map<FlowId, FlowMonitor::FlowStats>::const_iterator i = stats.begin(); i != stats.end(); ++i) {
-		Ipv4FlowClassifier::FiveTuple t = classifier->FindFlow (i->first);
-		/*
-		*streamTP->GetStream()  << "Flow " << i->first  << " (" << t.sourceAddress << " -> " << t.destinationAddress << ")\n";
-		*streamTP->GetStream()  << "  Tx Bytes:   " << i->second.txBytes << "\n";
-		*streamTP->GetStream()  << "  Rx Bytes:   " << i->second.rxBytes << "\n";
-		*streamTP->GetStream()  << "  Time        " << i->second.timeLastRxPacket.GetSeconds() - i->second.timeFirstTxPacket.GetSeconds() << "\n";
-		*streamTP->GetStream()  << "  Throughput: " << i->second.rxBytes * 8.0 / (i->second.timeLastRxPacket.GetSeconds() - i->second.timeFirstTxPacket.GetSeconds())/1024/1024  << " Mbps\n";	
-		*/
-		if(t.sourceAddress == "10.1.0.1") {
-			if(mapDrop.find(1)==mapDrop.end())
-				mapDrop[1] = 0;
-			*stream1PD->GetStream() << "TcpBbr Flow " << i->first  << " (" << t.sourceAddress << " -> " << t.destinationAddress << ")\n";
-			*stream1PD->GetStream()  << "Net Packet Lost: " << i->second.lostPackets << "\n";
-			*stream1PD->GetStream()  << "Packet Lost due to buffer overflow: " << mapDrop[1] << "\n";
-			*stream1PD->GetStream()  << "Packet Lost due to Congestion: " << i->second.lostPackets - mapDrop[1] << "\n";
-			*stream1PD->GetStream() << "Max throughput: " << mapMaxThroughput["/NodeList/4/$ns3::Ipv4L3Protocol/Rx"] << std::endl;
-		} else if(t.sourceAddress == "10.1.1.1") {
-			if(mapDrop.find(2)==mapDrop.end())
-				mapDrop[2] = 0;
-			*stream3PD->GetStream() << "TcpCubic Flow " << i->first  << " (" << t.sourceAddress << " -> " << t.destinationAddress << ")\n";
-			*stream3PD->GetStream()  << "Net Packet Lost: " << i->second.lostPackets << "\n";
-			*stream3PD->GetStream()  << "Packet Lost due to buffer overflow: " << mapDrop[2] << "\n";
-			*stream3PD->GetStream()  << "Packet Lost due to Congestion: " << i->second.lostPackets - mapDrop[2] << "\n";
-			*stream3PD->GetStream() << "Max throughput: " << mapMaxThroughput["/NodeList/5/$ns3::Ipv4L3Protocol/Rx"] << std::endl;
-		}
-	}
+  // Throughput
+  for (const std::pair<std::string, uint64_t> p : mapPacketsReceivedIPV4) {
+    std::cout << p.first << ": " << static_cast<double>(p.second * packetSize * 8) / durationGap << "bps"<< std::endl;
+  } 
 
-	//flowmon->SerializeToXmlFile("application_6_b.flowmon", true, true);
 	std::cout << "Simulation finished" << std::endl;
 	Simulator::Destroy();
 }
