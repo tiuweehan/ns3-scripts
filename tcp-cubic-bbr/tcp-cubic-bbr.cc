@@ -5,6 +5,8 @@
 #include "ns3/point-to-point-dumbbell.h"
 #include "ns3/applications-module.h"
 
+#include "ns3/flow-monitor-module.h"
+
 // Default Network Topology
 //
 //  H1 -----.                .----- H7
@@ -102,6 +104,7 @@ void ClientApp::StopApplication(void) {
 }
 
 void ClientApp::SendPacket(void) {
+  cout << "Sending packet #" << mPacketsSent << '\n';
   Ptr<Packet> packet = Create<Packet>(mPacketSize);
   mSocket->Send(packet);
 
@@ -163,25 +166,26 @@ Ptr<Socket> uniFlow(
 
 int main(int argc, char** argv) {
   // bool verbose = false;
-  // bool tracing = false;
+  bool tracing = false;
+  bool flowMonitoring = true;
 
   uint32_t nBBR = 3;
   uint32_t nCubic = 3;
 
   // Link Details
-  string pointToPointBandwidth = "10Mbps";
-  string pointToPointDelay = "1ms";
+  string pointToPointBandwidth = "100Mbps";
+  string pointToPointDelay = "20ms";
 
-  string bottleNeckBandwith = "1Mbps";
+  string bottleNeckBandwith = "10Mbps";
   string bottleNeckDelay = "50ms";
 
   // Application Details
-  double serverAppStartTime = 1.;
-  double serverAppStopTime = 60.;
+  double serverAppStartTime = 1;
+  double serverAppStopTime = 60;
   uint32_t packetSize = 1024; // 1KB
-  uint32_t nPackets = 1024 * 20; // 20 * 1Mb packets = 20Mb
-  string applicationTransferSpeed = "1Mbps"; 
-  double clientAppStartTime = 2.;
+  uint32_t nPackets = 2048 * 20; // 20 * 1Mb packets = 20Mb
+  string applicationTransferSpeed = "400Mbps"; 
+  double clientAppStartTime = 2;
   double clientAppStopTime = 60;
  
   CommandLine cmd;
@@ -267,9 +271,6 @@ int main(int argc, char** argv) {
     serverIPs.NewNetwork();
   }
 
-  // Use Static Global Routing
-  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
-
   // Server Application port
   int port = 42069;
 
@@ -311,9 +312,31 @@ int main(int argc, char** argv) {
     );
   }
 
-  // Run simulation
-  Simulator::Stop (Seconds(60));
-  Simulator::Run ();
+  // Use Static Global Routing
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
+
+  // Add Pcap tracing
+  if (tracing == true) {
+    bottleNeckLink.EnablePcapAll("bottleneck");
+  }
+
+  // Add Flow Monitor
+  if (flowMonitoring == true) {
+    Ptr<FlowMonitor> flowMonitor;
+    FlowMonitorHelper flowMonitorHelper;
+    flowMonitor = flowMonitorHelper.InstallAll();
+
+    // Run Simulation
+    Simulator::Stop (Seconds(60));
+    Simulator::Run ();
+
+    flowMonitor->CheckForLostPackets();
+  } else {
+    // Run Simulation
+    Simulator::Stop (Seconds(60));
+    Simulator::Run ();
+  }
+
   Simulator::Destroy ();
 
   return 0;

@@ -244,12 +244,12 @@ Ptr<Socket> uniFlow(Address sinkAddress,
 
 	if(tcpVariant.compare("TcpReno") == 0) {
     // Commented because TcpReno does not exist in ns-3.27
-		// Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpReno::GetTypeId()));
+		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
 	} else if(tcpVariant.compare("TcpWestwood") == 0) {
-		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpWestwood::GetTypeId()));
+		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
 	} else if(tcpVariant.compare("TcpFack") == 0) {
     // Commented because TcpReno does not exist in ns-3.27
-		// Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpTahoe::GetTypeId()));
+		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
 	} else {
 		fprintf(stderr, "Invalid TCP version\n");
 		exit(EXIT_FAILURE);
@@ -287,7 +287,7 @@ void partAC() {
 	double errorP = ERROR;
 
 	//set droptail queue mode as packets i.e. to use maxpackets as queuesize metric not bytes
-	Config::SetDefault("ns3::DropTailQueue::Mode", StringValue("QUEUE_MODE_PACKETS"));
+	Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
     /*
     Config::SetDefault("ns3::DropTailQueue::MaxPackets", UintegerValue(queuesize));
 	*/
@@ -473,8 +473,8 @@ void partAC() {
 	Config::Connect(sink_, MakeBoundCallback(&ReceivedPacketIPV4, stream3TP, netDuration));
 	netDuration += durationGap;
 
-	//p2pHR.EnablePcapAll("application_6__a");
-	//p2pRR.EnablePcapAll("application_6_RR_a");
+	p2pHR.EnablePcapAll("application_6__a");
+	p2pRR.EnablePcapAll("application_6_RR_a");
 
 	//Turning on Static Global Routing
 	Ipv4GlobalRoutingHelper::PopulateRoutingTables();
@@ -547,7 +547,7 @@ void partBC() {
 	double errorP = ERROR;
 
 
-	Config::SetDefault("ns3::DropTailQueue::Mode", StringValue("QUEUE_MODE_PACKETS"));
+	Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
     /*
     Config::SetDefault("ns3::DropTailQueue::MaxPackets", UintegerValue(queuesize));
 	*/
@@ -634,7 +634,7 @@ void partBC() {
 	********************************************************************/
 	double durationGap = 100;
 	double oneFlowStart = 0;
-	double otherFlowStart = 20;
+	double otherFlowStart = 0;
 	uint port = 9000;
 	uint numPackets = 10000000;
 	std::string transferSpeed = "400Mbps";
