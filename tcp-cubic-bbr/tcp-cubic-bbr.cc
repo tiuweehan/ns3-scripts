@@ -25,11 +25,12 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("TCPCubicBBRFlowExperiment");
 
-int main(int argc, int argv) {
-  bool verbose = false;
-  bool tracing = false;
+int main(int argc, char** argv) {
+  // bool verbose = false;
+  // bool tracing = false;
 
-  uint32_t nClients = 6;
+  uint32_t nBBR = 3;
+  uint32_t nCubic = 3;
 
   string pointToPointBandwidth = "10Mbps";
   string pointToPointDelay = "1ms";
@@ -37,11 +38,14 @@ int main(int argc, int argv) {
   string bottleNeckBandwith = "1Mbps";
   string bottleNeckDelay = "50ms";
 
-  int port = 42069;
+  // int port = 42069;
 
   CommandLine cmd(__FILE__);
 
-  cmd.AddValue("nClients", "Number of Clients", nClients);
+  cmd.AddValue("nBBR", "Number of Clients", nBBR);
+  cmd.AddValue("nCubic", "Number of Clients", nCubic);
+
+  uint32_t nClients = nBBR + nCubic;
 
   // Create links 
   PointToPointHelper pointToPointLink;
