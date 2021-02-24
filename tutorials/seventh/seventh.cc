@@ -205,7 +205,7 @@ main (int argc, char *argv[])
 {
   bool useV6 = false;
 
-  CommandLine cmd (__FILE__);
+  CommandLine cmd;
   cmd.AddValue ("useIpv6", "Use Ipv6", useV6);
   cmd.Parse (argc, argv);
 

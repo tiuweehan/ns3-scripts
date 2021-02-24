@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
 
   // int port = 42069;
 
-  CommandLine cmd(__FILE__);
+  CommandLine cmd;
 
   cmd.AddValue("nBBR", "Number of Clients", nBBR);
   cmd.AddValue("nCubic", "Number of Clients", nCubic);
