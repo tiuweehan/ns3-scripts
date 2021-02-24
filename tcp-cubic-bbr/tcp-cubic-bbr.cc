@@ -25,6 +25,142 @@ using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("TCPCubicBBRFlowExperiment");
 
+class ClientApp: public Application {
+  public:
+    ClientApp();
+    virtual ~ClientApp();
+
+    static TypeId GetTypeId (void);
+    void Setup(Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t nPackets, DataRate dataRate);
+  
+  private:
+    virtual void StartApplication(void);
+    virtual void StopApplication(void);
+
+    void ScheduleTx(void);
+    void SendPacket(void);
+
+    Ptr<Socket> mSocket;
+    Address mPeer;
+    uint32_t mPacketSize;
+    uint32_t mNPackets;
+    DataRate mDataRate;
+    EventId mSendEvent;
+    bool mRunning;
+    uint32_t mPacketsSent;
+
+};
+
+ClientApp::ClientApp(void):
+  mSocket(0),
+  mPacketSize(0),
+  mNPackets(0),
+  mDataRate(0),
+  mSendEvent(),
+  mRunning(false),
+  mPacketsSent(0) {
+}
+
+ClientApp::~ClientApp(void) {
+  mSocket = 0;
+}
+
+TypeId ClientApp::GetTypeId (void) {
+  static TypeId tid = TypeId ("ClientApp")
+    .SetParent<Application> ()
+    .AddConstructor<ClientApp> ()
+    ;
+  return tid;
+}
+
+void ClientApp::Setup(Ptr<Socket> socket, Address address, uint32_t packetSize, uint32_t nPackets, DataRate dataRate) {
+  mSocket = socket;
+  mPeer = address;
+  mPacketSize = packetSize;
+  mNPackets = nPackets;
+  mDataRate = dataRate;
+}
+
+void ClientApp::StartApplication(void) {
+  mRunning = true;
+  mPacketsSent = 0;
+  mSocket->Bind();
+  mSocket->Connect(mPeer);
+  SendPacket();
+}
+
+void ClientApp::StopApplication(void) {
+  mRunning = false;
+  
+  if (mSendEvent.IsRunning()) {
+    Simulator::Cancel(mSendEvent);
+  }
+
+  if (mSocket) {
+    mSocket->Close();
+  }
+}
+
+void ClientApp::SendPacket(void) {
+  Ptr<Packet> packet = Create<Packet>(mPacketSize);
+  mSocket->Send(packet);
+
+  if (++mPacketsSent < mNPackets) {
+    ScheduleTx();
+  }
+}
+
+void ClientApp::ScheduleTx(void) {
+  if (mRunning) {
+    Time tNext(Seconds(mPacketSize * 8 / static_cast<double>(mDataRate.GetBitRate())));
+    mSendEvent = Simulator::Schedule(tNext, &ClientApp::SendPacket, this);
+  }
+}
+
+// Creates a TCP socket and the corresponding application on the client and server.
+Ptr<Socket> uniFlow(
+  Address serverAddress,
+  uint32_t serverPort,
+  string tcpVariant,
+  Ptr<Node> clientNode,
+  Ptr<Node> serverNode,
+  double serverAppStartTime,
+  double serverAppEndTime,
+  uint32_t packetSize,
+  uint32_t numPackets,
+  string dataRate,
+  double clientAppStartTime,
+  double clientAppStopTime
+) {
+  // Configure type of socket
+  if (tcpVariant.compare("TcpBbr") == 0) {
+    Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
+  } else if (tcpVariant.compare("TcpCubic") == 0) {
+    Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
+  } else {
+    fprintf(stderr, "Invalid TCP version\n");
+		exit(EXIT_FAILURE);
+  }
+
+  // Create server app (on the server side)
+  PacketSinkHelper packetSinkHelper("ns3::TcpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), serverPort));
+  ApplicationContainer serverApp = packetSinkHelper.Install(serverNode);
+  serverApp.Start(Seconds(serverAppStartTime)); 
+  serverApp.Start(Seconds(serverAppEndTime)); 
+  
+  // Create TCP socket used by the client app
+  Ptr<Socket> ns3TcpSocket = Socket::CreateSocket(clientNode, TcpSocketFactory::GetTypeId());
+
+  // Create client app (on the client side)
+  Ptr<ClientApp> clientApp = CreateObject<ClientApp>();
+  clientApp->Setup(ns3TcpSocket, serverAddress, packetSize, numPackets, DataRate(dataRate));
+  clientNode->AddApplication(clientApp);
+  clientApp->SetStartTime(Seconds(clientAppStartTime));
+  clientApp->SetStopTime(Seconds(clientAppStopTime));
+
+  return ns3TcpSocket;
+}
+
 int main(int argc, char** argv) {
   // bool verbose = false;
   // bool tracing = false;
@@ -32,14 +168,22 @@ int main(int argc, char** argv) {
   uint32_t nBBR = 3;
   uint32_t nCubic = 3;
 
+  // Link Details
   string pointToPointBandwidth = "10Mbps";
   string pointToPointDelay = "1ms";
 
   string bottleNeckBandwith = "1Mbps";
   string bottleNeckDelay = "50ms";
 
-  // int port = 42069;
-
+  // Application Details
+  double serverAppStartTime = 1.;
+  double serverAppStopTime = 60.;
+  uint32_t packetSize = 1024; // 1KB
+  uint32_t nPackets = 1024 * 20; // 20 * 1Mb packets = 20Mb
+  string applicationTransferSpeed = "1Mbps"; 
+  double clientAppStartTime = 2.;
+  double clientAppStopTime = 60;
+ 
   CommandLine cmd;
 
   cmd.AddValue("nBBR", "Number of Clients", nBBR);
@@ -57,69 +201,120 @@ int main(int argc, char** argv) {
   bottleNeckLink.SetChannelAttribute("Delay",StringValue(bottleNeckDelay));
 
   // Create nodes
-  NodeContainer routers, leftNodes, rightNodes;
+  NodeContainer routers, clientNodes, serverNodes;
   routers.Create(2);
-  leftNodes.Create(nClients);
-  rightNodes.Create(nClients);
+  clientNodes.Create(nClients);
+  serverNodes.Create(nClients);
 
   // Install links between routers
   NetDeviceContainer routerDevices = bottleNeckLink.Install(routers);
 
   // Install links onto nodes
-  NetDeviceContainer leftRouterDevices;
-  NetDeviceContainer leftNodeDevices;
-  NetDeviceContainer rightRouterDevices;
-  NetDeviceContainer rightNodeDevices;
+  NetDeviceContainer clientRouterDevices;
+  NetDeviceContainer clientNodeDevices;
+  NetDeviceContainer serverRouterDevices;
+  NetDeviceContainer serverNodeDevices;
 
   for (uint32_t i = 0; i < nClients; i++) {
-    // Install the links between the left nodes and left router
-    NetDeviceContainer leftDevice = pointToPointLink.Install(routers.Get(0), leftNodes.Get(i));
-    leftRouterDevices.Add(leftDevice.Get(0));
-    leftNodeDevices.Add(leftDevice.Get(1));
+    // Install the links between the client nodes and client router
+    NetDeviceContainer clientDevice = pointToPointLink.Install(routers.Get(0), clientNodes.Get(i));
+    clientRouterDevices.Add(clientDevice.Get(0));
+    clientNodeDevices.Add(clientDevice.Get(1));
 
-    // Install the links between the right nodes and right router
-    NetDeviceContainer rightDevice = pointToPointLink.Install(routers.Get(0), rightNodes.Get(i));
-    rightRouterDevices.Add(rightDevice.Get(0));
-    rightNodeDevices.Add(rightDevice.Get(1));
+    // Install the links between the server nodes and server router
+    NetDeviceContainer serverDevice = pointToPointLink.Install(routers.Get(0), serverNodes.Get(i));
+    serverRouterDevices.Add(serverDevice.Get(0));
+    serverNodeDevices.Add(serverDevice.Get(1));
   }
 
   // Install internet stack onto all nodes
   InternetStackHelper stack;
   stack.Install(routers);
-  stack.Install(leftNodes);
-  stack.Install(rightNodes);
+  stack.Install(clientNodes);
+  stack.Install(serverNodes);
 
   // Create IPv4 addresses
   Ipv4AddressHelper routerIPs = Ipv4AddressHelper("10.3.0.0", "255.255.255.0");
-  Ipv4AddressHelper leftIPs = Ipv4AddressHelper("10.1.0.0", "255.255.255.0");
-  Ipv4AddressHelper rightIPs = Ipv4AddressHelper("10.2.0.0", "255.255.255.0");
+  Ipv4AddressHelper clientIPs = Ipv4AddressHelper("10.1.0.0", "255.255.255.0");
+  Ipv4AddressHelper serverIPs = Ipv4AddressHelper("10.2.0.0", "255.255.255.0");
 
   // Assign IPv4 addresses to connection between router devices
   Ipv4InterfaceContainer routerInterfaces = routerIPs.Assign(routerDevices);
   
   // Assign IPv4 address to connection between node and router devices
-  Ipv4InterfaceContainer leftNodeInterfaces;
-  Ipv4InterfaceContainer leftRouterInterfaces;
-  Ipv4InterfaceContainer rightNodeInterfaces;
-  Ipv4InterfaceContainer rightRouterInterfaces;
+  Ipv4InterfaceContainer clientNodeInterfaces;
+  Ipv4InterfaceContainer clientRouterInterfaces;
+  Ipv4InterfaceContainer serverNodeInterfaces;
+  Ipv4InterfaceContainer serverRouterInterfaces;
 
   for (uint32_t i = 0; i < nClients; i++) {
-    // Assign IPv4 address to connection between left nodes and router devices
-    NetDeviceContainer leftDevices;
-    leftDevices.Add(leftNodeDevices.Get(i));
-    leftDevices.Add(leftRouterDevices.Get(i));
-    Ipv4InterfaceContainer leftInterfaces = leftIPs.Assign(leftDevices);
-    leftNodeInterfaces.Add(leftInterfaces.Get(0));
-    leftRouterInterfaces.Add(leftInterfaces.Get(1));
-    leftIPs.NewNetwork();
+    // Assign IPv4 address to connection between client nodes and router devices
+    NetDeviceContainer clientDevices;
+    clientDevices.Add(clientNodeDevices.Get(i));
+    clientDevices.Add(clientRouterDevices.Get(i));
+    Ipv4InterfaceContainer clientInterfaces = clientIPs.Assign(clientDevices);
+    clientNodeInterfaces.Add(clientInterfaces.Get(0));
+    clientRouterInterfaces.Add(clientInterfaces.Get(1));
+    clientIPs.NewNetwork();
 
-    // Assign IPv4 address to connection between right nodes and router devices
-    NetDeviceContainer rightDevices;
-    rightDevices.Add(rightNodeDevices.Get(i));
-    rightDevices.Add(rightRouterDevices.Get(i));
-    Ipv4InterfaceContainer rightInterfaces = rightIPs.Assign(rightDevices);
-    rightNodeInterfaces.Add(rightInterfaces.Get(0));
-    rightRouterInterfaces.Add(rightInterfaces.Get(1));
-    rightIPs.NewNetwork();
+    // Assign IPv4 address to connection between server nodes and router devices
+    NetDeviceContainer serverDevices;
+    serverDevices.Add(serverNodeDevices.Get(i));
+    serverDevices.Add(serverRouterDevices.Get(i));
+    Ipv4InterfaceContainer serverInterfaces = serverIPs.Assign(serverDevices);
+    serverNodeInterfaces.Add(serverInterfaces.Get(0));
+    serverRouterInterfaces.Add(serverInterfaces.Get(1));
+    serverIPs.NewNetwork();
   }
+
+  // Use Static Global Routing
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
+
+  // Server Application port
+  int port = 42069;
+
+  // TCP Cubic Flows
+  for (uint32_t i = 0; i < nCubic; i++) {
+    uint32_t nodeIndex = i;
+    uniFlow(
+      InetSocketAddress(serverNodeInterfaces.GetAddress(nodeIndex), port),
+      port,
+      "TcpCubic",
+      clientNodes.Get(nodeIndex),
+      serverNodes.Get(nodeIndex),
+      serverAppStartTime,
+      serverAppStopTime,
+      packetSize,
+      nPackets,
+      applicationTransferSpeed,
+      clientAppStartTime,
+      clientAppStopTime
+    );
+  }
+
+  // TCP BBR Flows
+  for (uint32_t i = 0; i < nBBR; i++) {
+    uint32_t nodeIndex = i + nCubic;
+    uniFlow(
+      InetSocketAddress(serverNodeInterfaces.GetAddress(nodeIndex), port),
+      port,
+      "TcpBbr",
+      clientNodes.Get(nodeIndex),
+      serverNodes.Get(nodeIndex),
+      serverAppStartTime,
+      serverAppStopTime,
+      packetSize,
+      nPackets,
+      applicationTransferSpeed,
+      clientAppStartTime,
+      clientAppStopTime
+    );
+  }
+
+  // Run simulation
+  Simulator::Stop (Seconds(60));
+  Simulator::Run ();
+  Simulator::Destroy ();
+
+  return 0;
 }
