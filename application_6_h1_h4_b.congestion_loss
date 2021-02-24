@@ -1,5 +1,0 @@
-TcpBbr Flow 1 (10.1.0.1 -> 10.2.0.1)
-Net Packet Lost: 10
-Packet Lost due to buffer overflow: 0
-Packet Lost due to Congestion: 10
-Max throughput: 2685.63
