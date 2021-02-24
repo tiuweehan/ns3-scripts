@@ -25,6 +25,8 @@
 using namespace std;
 using namespace ns3;
 
+#define ERROR 0.000001
+
 NS_LOG_COMPONENT_DEFINE ("TCPCubicBBRFlowExperiment");
 
 class ClientApp: public Application {
@@ -104,13 +106,14 @@ void ClientApp::StopApplication(void) {
 }
 
 void ClientApp::SendPacket(void) {
-  cout << "Sending packet #" << mPacketsSent << '\n';
+  // cout << "Time: " << Simulator::Now().GetSeconds() << "s, packet #" << mPacketsSent << '\n';
   Ptr<Packet> packet = Create<Packet>(mPacketSize);
   mSocket->Send(packet);
 
-  if (++mPacketsSent < mNPackets) {
-    ScheduleTx();
-  }
+  // if (++mPacketsSent < mNPackets) {
+  ++mPacketsSent;
+  ScheduleTx();
+  // }
 }
 
 void ClientApp::ScheduleTx(void) {
@@ -118,6 +121,12 @@ void ClientApp::ScheduleTx(void) {
     Time tNext(Seconds(mPacketSize * 8 / static_cast<double>(mDataRate.GetBitRate())));
     mSendEvent = Simulator::Schedule(tNext, &ClientApp::SendPacket, this);
   }
+}
+
+map<string, uint64_t> m;
+
+void ReceivedPacketIpv4(string context, Ptr<const Packet> p, Ptr< Ipv4 > ipv4, uint32_t interface) {
+  m[context]++;  
 }
 
 // Creates a TCP socket and the corresponding application on the client and server.
@@ -181,12 +190,15 @@ int main(int argc, char** argv) {
 
   // Application Details
   double serverAppStartTime = 1;
-  double serverAppStopTime = 60;
-  uint32_t packetSize = 1024; // 1KB
-  uint32_t nPackets = 2048 * 20; // 20 * 1Mb packets = 20Mb
-  string applicationTransferSpeed = "400Mbps"; 
   double clientAppStartTime = 2;
-  double clientAppStopTime = 60;
+  double AppRunningDuration = 120; // 2 minutes
+
+  double simulationStopTime = clientAppStartTime + AppRunningDuration;
+  double serverAppStopTime = simulationStopTime;
+  double clientAppStopTime = simulationStopTime;
+  uint32_t packetSize = 1024; // 1KB
+  uint32_t nPackets = INT32_MAX; // 20 * 1Mb packets = 20Mb
+  string applicationTransferSpeed = "400Mbps"; 
  
   CommandLine cmd;
 
@@ -195,14 +207,25 @@ int main(int argc, char** argv) {
 
   uint32_t nClients = nBBR + nCubic;
 
+  // Queue
+  uint queueSizeHR = (100000*20)/packetSize;
+	uint queueSizeRR = (10000*50)/packetSize;
+  Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
+
+  // Error
+  double errorP = ERROR;
+  Ptr<RateErrorModel> em = CreateObjectWithAttributes<RateErrorModel> ("ErrorRate", DoubleValue (errorP));
+
   // Create links 
   PointToPointHelper pointToPointLink;
   pointToPointLink.SetDeviceAttribute("DataRate", StringValue(pointToPointBandwidth));
   pointToPointLink.SetChannelAttribute("Delay",StringValue(pointToPointDelay));
+	pointToPointLink.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeHR));
 
   PointToPointHelper bottleNeckLink;
   bottleNeckLink.SetDeviceAttribute("DataRate", StringValue(bottleNeckBandwith));
   bottleNeckLink.SetChannelAttribute("Delay",StringValue(bottleNeckDelay));
+	bottleNeckLink.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
 
   // Create nodes
   NodeContainer routers, clientNodes, serverNodes;
@@ -224,11 +247,13 @@ int main(int argc, char** argv) {
     NetDeviceContainer clientDevice = pointToPointLink.Install(routers.Get(0), clientNodes.Get(i));
     clientRouterDevices.Add(clientDevice.Get(0));
     clientNodeDevices.Add(clientDevice.Get(1));
+    clientDevice.Get(0)->SetAttribute("ReceiveErrorModel", PointerValue(em));
 
     // Install the links between the server nodes and server router
-    NetDeviceContainer serverDevice = pointToPointLink.Install(routers.Get(0), serverNodes.Get(i));
+    NetDeviceContainer serverDevice = pointToPointLink.Install(routers.Get(1), serverNodes.Get(i));
     serverRouterDevices.Add(serverDevice.Get(0));
     serverNodeDevices.Add(serverDevice.Get(1));
+    serverDevice.Get(0)->SetAttribute("ReceiveErrorModel", PointerValue(em));
   }
 
   // Install internet stack onto all nodes
@@ -277,12 +302,15 @@ int main(int argc, char** argv) {
   // TCP Cubic Flows
   for (uint32_t i = 0; i < nCubic; i++) {
     uint32_t nodeIndex = i;
+    Ptr<Node> clientNode = clientNodes.Get(nodeIndex);
+    Ptr<Node> serverNode = serverNodes.Get(nodeIndex);
+ 
     uniFlow(
       InetSocketAddress(serverNodeInterfaces.GetAddress(nodeIndex), port),
       port,
       "TcpCubic",
-      clientNodes.Get(nodeIndex),
-      serverNodes.Get(nodeIndex),
+      clientNode,
+      serverNode,
       serverAppStartTime,
       serverAppStopTime,
       packetSize,
@@ -291,17 +319,23 @@ int main(int argc, char** argv) {
       clientAppStartTime,
       clientAppStopTime
     );
+
+    stringstream sink;
+    sink << "/NodeList/" << serverNode->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
+    Config::Connect(sink.str(), MakeCallback(&ReceivedPacketIpv4));
   }
 
   // TCP BBR Flows
   for (uint32_t i = 0; i < nBBR; i++) {
     uint32_t nodeIndex = i + nCubic;
+    Ptr<Node> clientNode = clientNodes.Get(nodeIndex);
+    Ptr<Node> serverNode = serverNodes.Get(nodeIndex);
     uniFlow(
       InetSocketAddress(serverNodeInterfaces.GetAddress(nodeIndex), port),
       port,
       "TcpBbr",
-      clientNodes.Get(nodeIndex),
-      serverNodes.Get(nodeIndex),
+      clientNode,
+      serverNode,
       serverAppStartTime,
       serverAppStopTime,
       packetSize,
@@ -310,6 +344,10 @@ int main(int argc, char** argv) {
       clientAppStartTime,
       clientAppStopTime
     );
+
+    stringstream sink;
+    sink << "/NodeList/" << serverNode->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
+    Config::Connect(sink.str(), MakeCallback(&ReceivedPacketIpv4));
   }
 
   // Use Static Global Routing
@@ -327,14 +365,19 @@ int main(int argc, char** argv) {
     flowMonitor = flowMonitorHelper.InstallAll();
 
     // Run Simulation
-    Simulator::Stop (Seconds(60));
+    Simulator::Stop (Seconds(simulationStopTime));
     Simulator::Run ();
 
     flowMonitor->CheckForLostPackets();
   } else {
     // Run Simulation
-    Simulator::Stop (Seconds(60));
+    Simulator::Stop (Seconds(simulationStopTime));
     Simulator::Run ();
+  }
+
+  // Output throughput
+  for (const pair<string, uint64_t>& k : m) {
+    cout << k.first << ": " << k.second << '\n';
   }
 
   Simulator::Destroy ();
