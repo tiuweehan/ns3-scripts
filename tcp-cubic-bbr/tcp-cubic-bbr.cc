@@ -36,6 +36,9 @@ typedef uint32_t uint;
 
 using namespace ns3;
 
+#define TCP_BBR "TcpBbr"
+#define TCP_CUBIC "TcpCubic"
+
 #define ERROR 0.000001
 
 NS_LOG_COMPONENT_DEFINE ("App6");
@@ -156,9 +159,9 @@ Ptr<Socket> uniFlow(Address sinkAddress,
 					double appStartTime,
 					double appStopTime) {
 
-	if(tcpVariant.compare("TcpBbr") == 0) {
+	if(tcpVariant.compare(TCP_BBR) == 0) {
 		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
-	} else if(tcpVariant.compare("TcpCubic") == 0) {
+	} else if(tcpVariant.compare(TCP_CUBIC) == 0) {
 		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
 	} else {
 		fprintf(stderr, "Invalid TCP version\n");
@@ -284,8 +287,10 @@ int main(int argc, char **argv) {
 	
 	//TCP BBR
   std::cout << "Creating TCP BBR Sockets" << std::endl;
-  for (uint i = 0; i < nBbr; i++) {
-    uniFlow(InetSocketAddress(receiverIFCs.GetAddress(i), port), port, "TcpBbr", senders.Get(i), receivers.Get(i), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
+  for (uint i = 0; i < numSender; i++) {
+    std::string tcpProtocol = (i < nBbr ? TCP_BBR : TCP_CUBIC);
+
+    uniFlow(InetSocketAddress(receiverIFCs.GetAddress(i), port), port, tcpProtocol, senders.Get(i), receivers.Get(i), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
 
     std::stringstream sink;
     std::stringstream sink_;
@@ -298,31 +303,12 @@ int main(int argc, char **argv) {
     rttSink << "/NodeList/" << senders.Get(i)->GetId() << "/$ns3::TcpL4Protocol/SocketList/0/RTT";
     Config::Connect(rttSink.str(), MakeBoundCallback(&RttTracer, i));
   }
-
-	//TCP CUBIC
-  std::cout << "Creating TCP CUBIC Sockets" << std::endl;
-  for (uint i = nBbr; i < nBbr + nCubic; i++) {
-    uniFlow(InetSocketAddress(receiverIFCs.GetAddress(i), port), port, "TcpCubic", senders.Get(i), receivers.Get(i), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
-
-    std::stringstream sink;
-    std::stringstream sink_;
-    sink << "/NodeList/" << receivers.Get(i)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
-    Config::Connect(sink.str(), MakeCallback(&ReceivedPacket));
-    sink_ << "/NodeList/" << receivers.Get(i)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
-    Config::Connect(sink_.str(), MakeBoundCallback(&ReceivedPacketIPV4, i));
-
-    std::stringstream rttSink;
-    rttSink << "/NodeList/" << senders.Get(i)->GetId() << "/$ns3::TcpL4Protocol/SocketList/0/RTT";
-    Config::Connect(rttSink.str(), MakeBoundCallback(&RttTracer, i));
-  }
-
-	//p2pHR.EnablePcapAll("application_6_HR_a");
-	//p2pRR.EnablePcapAll("application_6_RR_a");
 
 	//Turning on Static Global Routing
 	std::cout << "Turning on Static Global Routing" << std::endl;
 	Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
+	std::cout << "Simulation started" << std::endl;
 	Simulator::Stop(Seconds(durationGap+flowStart));
 	Simulator::Run();
  
