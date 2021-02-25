@@ -127,15 +127,21 @@ void ClientApp::ScheduleTx() {
 	}
 }
 
-std::map<std::string, uint64_t> mapPacketsReceivedIPV4;
+std::map<uint, uint64_t> mapPacketsReceivedIPV4;
+std::map<uint, std::vector<Time>> mapRTT;  
 
 void ReceivedPacket(std::string context, Ptr<const Packet> p, const Address& addr){
 }
 
-void ReceivedPacketIPV4(std::string context, Ptr<const Packet> p, Ptr<Ipv4> ipv4, uint interface) {
-  mapPacketsReceivedIPV4[context]++;
+void ReceivedPacketIPV4(uint key, std::string context, Ptr<const Packet> p, Ptr<Ipv4> ipv4, uint interface) {
+  mapPacketsReceivedIPV4[key]++;
 }
 
+void
+RttTracer (uint key, std::string context, Time oldval, Time newval)
+{
+  mapRTT[key].push_back(newval);
+}
 
 Ptr<Socket> uniFlow(Address sinkAddress, 
 					uint sinkPort, 
@@ -286,7 +292,11 @@ int main(int argc, char **argv) {
     sink << "/NodeList/" << receivers.Get(i)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
     Config::Connect(sink.str(), MakeCallback(&ReceivedPacket));
     sink_ << "/NodeList/" << receivers.Get(i)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
-    Config::Connect(sink_.str(), MakeCallback(&ReceivedPacketIPV4));
+    Config::Connect(sink_.str(), MakeBoundCallback(&ReceivedPacketIPV4, i));
+
+    std::stringstream rttSink;
+    rttSink << "/NodeList/" << senders.Get(i)->GetId() << "/$ns3::TcpL4Protocol/SocketList/0/RTT";
+    Config::Connect(rttSink.str(), MakeBoundCallback(&RttTracer, i));
   }
 
 	//TCP CUBIC
@@ -299,7 +309,11 @@ int main(int argc, char **argv) {
     sink << "/NodeList/" << receivers.Get(i)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
     Config::Connect(sink.str(), MakeCallback(&ReceivedPacket));
     sink_ << "/NodeList/" << receivers.Get(i)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
-    Config::Connect(sink_.str(), MakeCallback(&ReceivedPacketIPV4));
+    Config::Connect(sink_.str(), MakeBoundCallback(&ReceivedPacketIPV4, i));
+
+    std::stringstream rttSink;
+    rttSink << "/NodeList/" << senders.Get(i)->GetId() << "/$ns3::TcpL4Protocol/SocketList/0/RTT";
+    Config::Connect(rttSink.str(), MakeBoundCallback(&RttTracer, i));
   }
 
 	//p2pHR.EnablePcapAll("application_6_HR_a");
@@ -311,11 +325,25 @@ int main(int argc, char **argv) {
 
 	Simulator::Stop(Seconds(durationGap+flowStart));
 	Simulator::Run();
+ 
+  for (uint i = 0; i < numSender; i++) {
+    std::cout << (i < nBbr ? "BBR" : "Cubic") << " #" << (i < nBbr ? i + 1: i % nBbr + 1) << std::endl; 
+    
+    // Throughput
+    double totalBits = static_cast<double>(mapPacketsReceivedIPV4[i] * packetSize * 8);
+    double throughput = totalBits / durationGap;
+    throughput /= (1024 * 1024); // Convert to Mbps
+    std::cout <<  "Throughput: " << throughput << "Mbps"<< std::endl;
 
-  // Throughput
-  for (const std::pair<std::string, uint64_t> p : mapPacketsReceivedIPV4) {
-    std::cout << p.first << ": " << static_cast<double>(p.second * packetSize * 8) / durationGap << "bps"<< std::endl;
-  } 
+    // Delay    
+    double delay = 0.0;
+    for (Time t : mapRTT[i]) {
+      delay += t.GetNanoSeconds();
+    }
+    delay /= mapRTT[i].size();
+    delay /= 1e6; // Convert to miliseconds
+    std::cout <<  "Delay: " << delay << "ms" << std::endl;
+  }
 
 	std::cout << "Simulation finished" << std::endl;
 	Simulator::Destroy();
