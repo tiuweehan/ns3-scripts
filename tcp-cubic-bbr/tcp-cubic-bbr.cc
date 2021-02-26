@@ -315,8 +315,11 @@ int main(int argc, char **argv) {
   for (uint i = 0; i < numSender; i++) {
     std::cout << (i < nBbr ? "BBR" : "Cubic") << " #" << (i < nBbr ? i + 1: i % nBbr + 1) << std::endl; 
     
+    double totalBytes = static_cast<double>(mapPacketsReceivedIPV4[i] * packetSize);
+    std::cout << "Total Bytes Sent: " << totalBytes << std::endl;
+    
     // Throughput
-    double totalBits = static_cast<double>(mapPacketsReceivedIPV4[i] * packetSize * 8);
+    double totalBits = static_cast<double>(totalBytes * 8);
     double throughput = totalBits / durationGap;
     throughput /= (1024 * 1024); // Convert to Mbps
     std::cout <<  "Throughput: " << throughput << "Mbps"<< std::endl;
