@@ -41,7 +41,7 @@ using namespace ns3;
 
 #define ERROR 0.000001
 
-NS_LOG_COMPONENT_DEFINE ("App6");
+NS_LOG_COMPONENT_DEFINE ("TcpBbrCubic");
 
 class ClientApp: public Application {
 	private:
@@ -231,13 +231,24 @@ int main(int argc, char **argv) {
 	uint queueSizeHR = queueSizeHRBytes / packetSize;
 	uint queueSizeRR = queueSizeRRBytes / packetSize;
 
+  NS_LOG_INFO(
+    "Number of Flows:" << std::endl <<
+    "   BBR Flows: " << nBbr << ", Cubic Flows: " << nCubic << ", Total Flows: " << numSender << std::endl <<
+    "Host <-> Router:" << std::endl <<
+    "   Data Rate: " << rateHR << ", Latency: " << latencyHR << ", Queue Size: " << queueSizeHR << " packets = " << queueSizeHR << " bytes" << std::endl <<
+    "Router <-> Router:" << std::endl <<
+    "   Data Rate: " << rateRR << ", Latency: " << latencyRR << ", Queue Size: " << queueSizeRR << " packets = " << queueSizeHR << " bytes, Error Rate: " << errorP << std::endl <<
+    "Application:" << std::endl <<
+    "   Packet Size: " << packetSize << " bytes, Send Rate: " << transferSpeed << ", Duration: " << durationGap << " seconds" << std::endl
+  );
+
 	Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
     /*
     Config::SetDefault("ns3::DropTailQueue::MaxPackets", UintegerValue(queuesize));
 	*/
 
 	//Creating channel without IP address
-	std::cout << "Creating channel without IP address" << std::endl;
+  NS_LOG_INFO("Creating channel without IP address");
 	PointToPointHelper p2pHR, p2pRR;
 	p2pHR.SetDeviceAttribute("DataRate", StringValue(rateHR));
 	p2pHR.SetChannelAttribute("Delay", StringValue(latencyHR));
@@ -247,7 +258,7 @@ int main(int argc, char **argv) {
 	p2pRR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
 
 	//Adding some error rate
-	std::cout << "Adding some error rate" << std::endl;
+	NS_LOG_INFO("Adding some error rate");
 	Ptr<RateErrorModel> em = CreateObjectWithAttributes<RateErrorModel> ("ErrorRate", DoubleValue (errorP));
 
 	NodeContainer routers, senders, receivers;
@@ -259,7 +270,7 @@ int main(int argc, char **argv) {
 	NetDeviceContainer leftRouterDevices, rightRouterDevices, senderDevices, receiverDevices;
 
 	//Adding links
-	std::cout << "Adding links" << std::endl;
+  NS_LOG_INFO("Adding links");
 	for(uint i = 0; i < numSender; ++i) {
 		NetDeviceContainer cleft = p2pHR.Install(routers.Get(0), senders.Get(i));
 		leftRouterDevices.Add(cleft.Get(0));
@@ -273,19 +284,17 @@ int main(int argc, char **argv) {
 	}
 
 	//Install Internet Stack
-	std::cout << "Install Internet Stack" << std::endl;
+	NS_LOG_INFO("Install Internet Stack");
 	InternetStackHelper stack;
 	stack.Install(routers);
 	stack.Install(senders);
 	stack.Install(receivers);
 
-
 	//Adding IP addresses
-	std::cout << "Adding IP addresses" << std::endl;
+	NS_LOG_INFO("Adding IP addresses");
 	Ipv4AddressHelper routerIP = Ipv4AddressHelper("10.3.0.0", "255.255.255.0");
 	Ipv4AddressHelper senderIP = Ipv4AddressHelper("10.1.0.0", "255.255.255.0");
 	Ipv4AddressHelper receiverIP = Ipv4AddressHelper("10.2.0.0", "255.255.255.0");
-	
 
 	Ipv4InterfaceContainer routerIFC, senderIFCs, receiverIFCs, leftRouterIFCs, rightRouterIFCs;
 
@@ -309,10 +318,8 @@ int main(int argc, char **argv) {
 		receiverIP.NewNetwork();
 	}
 
-
-	
 	//TCP BBR
-  std::cout << "Creating TCP BBR Sockets" << std::endl;
+  NS_LOG_INFO("Creating TCP BBR Sockets");
   for (uint i = 0; i < numSender; i++) {
     std::string tcpProtocol = (i < nBbr ? TCP_BBR : TCP_CUBIC);
 
@@ -331,24 +338,24 @@ int main(int argc, char **argv) {
   }
 
 	//Turning on Static Global Routing
-	std::cout << "Turning on Static Global Routing" << std::endl;
+	NS_LOG_INFO("Turning on Static Global Routing");
 	Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-	std::cout << "Simulation started" << std::endl;
+	NS_LOG_INFO("Simulation started");
 	Simulator::Stop(Seconds(durationGap+flowStart));
 	Simulator::Run();
  
   for (uint i = 0; i < numSender; i++) {
-    std::cout << (i < nBbr ? "BBR" : "Cubic") << " #" << (i < nBbr ? i + 1: i % nBbr + 1) << std::endl; 
+    NS_LOG_INFO((i < nBbr ? "BBR" : "Cubic") << " #" << (i < nBbr ? i + 1: i % nBbr + 1)); 
     
     double totalBytes = static_cast<double>(mapPacketsReceivedIPV4[i] * packetSize);
-    std::cout << "Total Bytes Sent: " << totalBytes << std::endl;
+    NS_LOG_INFO("Total Bytes Sent: " << totalBytes);
     
     // Throughput
     double totalBits = static_cast<double>(totalBytes * 8);
     double throughput = totalBits / durationGap;
     throughput /= (1024 * 1024); // Convert to Mbps
-    std::cout <<  "Throughput: " << throughput << "Mbps"<< std::endl;
+    NS_LOG_INFO("Throughput: " << throughput << "Mbps");
 
     // Delay    
     double delay = 0.0;
@@ -357,9 +364,9 @@ int main(int argc, char **argv) {
     }
     delay /= mapRTT[i].size();
     delay /= 1e6; // Convert to miliseconds
-    std::cout <<  "Delay: " << delay << "ms" << std::endl;
+    NS_LOG_INFO("Delay: " << delay << "ms");
   }
 
-	std::cout << "Simulation finished" << std::endl;
+	NS_LOG_INFO("Simulation finished");
 	Simulator::Destroy();
 }
