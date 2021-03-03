@@ -185,21 +185,51 @@ Ptr<Socket> uniFlow(Address sinkAddress,
 }
 
 int main(int argc, char **argv) {
+  uint nBbr = 3;
+  uint nCubic = 3;
+
 	std::string rateHR = "100Mbps";
 	std::string latencyHR = "20ms";
 	std::string rateRR = "10Mbps";
 	std::string latencyRR = "50ms";
-
-	uint packetSize = 1.2*1024;		//1.2KB
-	uint queueSizeHR = (100000*20)/packetSize;
-	uint queueSizeRR = (10000*50)/packetSize;
-
-  uint nBbr = 3;
-  uint nCubic = 3;
-	uint numSender = nBbr + nCubic;
-
 	double errorP = ERROR;
 
+	std::string transferSpeed = "400Mbps";
+
+	double flowStart = 0;
+	double durationGap = 120;
+
+	uint port = 9000;
+	uint numPackets = 10000000;
+
+	uint packetSize = 1.2 * 1024;		//1.2KB
+  uint queueSizeHRBytes = 20 * 100000;
+  uint queueSizeRRBytes = 10000 * 50;
+
+  CommandLine cmd;
+  cmd.AddValue ("nBbr", "Number of BBR flows", nBbr);
+  cmd.AddValue ("nCubic", "Number of Cubic", nCubic);
+
+  cmd.AddValue ("rateHR", "Data rate between hosts and router", rateHR);
+  cmd.AddValue ("latencyHR", "Latency between hosts and router", latencyHR);
+  cmd.AddValue ("rateRR", "Data rate between routers", rateRR);
+  cmd.AddValue ("latencyRR", "Latency between routers", latencyRR);
+  cmd.AddValue ("queueSizeHR", "Size of queue between hosts and router (in bytes)", queueSizeHRBytes);
+  cmd.AddValue ("queueSizeRR", "Size of queue between rouers (in bytes)", queueSizeRRBytes);
+  cmd.AddValue ("errorRR", "Error rate of link between routers", errorP);
+
+  cmd.AddValue("packetSize", "Size of packets sent (in bytes)", packetSize);
+  cmd.AddValue ("duration", "Duration to run the simulation (in seconds)", durationGap);
+  cmd.AddValue ("transferSpeed", "Application data rate", transferSpeed);
+
+  cmd.Parse (argc, argv);
+  
+  if (nBbr == 0) nBbr = 1;
+  if (nCubic == 0) nCubic = 1;
+	uint numSender = nBbr + nCubic;
+
+	uint queueSizeHR = queueSizeHRBytes / packetSize;
+	uint queueSizeRR = queueSizeRRBytes / packetSize;
 
 	Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
     /*
@@ -279,11 +309,7 @@ int main(int argc, char **argv) {
 		receiverIP.NewNetwork();
 	}
 
-	double durationGap = 120;
-	double flowStart = 0;
-	uint port = 9000;
-	uint numPackets = 10000000;
-	std::string transferSpeed = "400Mbps";
+
 	
 	//TCP BBR
   std::cout << "Creating TCP BBR Sockets" << std::endl;
