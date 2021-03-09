@@ -19,10 +19,7 @@
  *
  */
 
-#include <string>
-#include <fstream>
-#include <cstdlib>
-#include <vector>
+#include <bits/stdc++.h>
 #include "ns3/core-module.h"
 #include "ns3/network-module.h"
 #include "ns3/point-to-point-module.h"
@@ -34,6 +31,7 @@
 
 typedef uint32_t uint;
 
+using namespace std;
 using namespace ns3;
 
 #define TCP_BBR "TcpBbr"
@@ -184,7 +182,7 @@ Ptr<Socket> uniFlow(Address sinkAddress,
 	return ns3TcpSocket;
 }
 
-int main(int argc, char **argv) {
+int start(int argc, char **argv) {
   uint nBbr = 3;
   uint nCubic = 3;
 
@@ -370,4 +368,238 @@ int main(int argc, char **argv) {
 
 	std::cout << "Simulation finished" << std::endl;
 	Simulator::Destroy();
+}
+
+typedef map<string, vector<int>> BitPattern;
+
+class ParetoConf {
+  public:
+        std::string RESULT_FOLDER_PATH = "results-2dumps/";
+        std::string PCAPS_FOLDER_PATH = "pcaps-2dumps/" ;
+        std::string HYDRA = "10.0.0.1";
+        std::string NEMO = "10.0.0.2";
+        std::string NEMO_INTERFACE = "enp2s0";
+        std::string GALACTICA = "5.5.5.2";
+        std::string CAPRICA = "5.5.5.1";
+        std::string GALACTICA_INTERFACE = "enp7s4";
+        std::string CAPRICA_INTERFACE = "eth1";
+        std::string RECEIVER_IP = CAPRICA;
+        std::string RECEIVER_BASE_PORT = "10086"  ;
+        std::string RECEIVER_SCRIPT = "./start_test.sh";
+        std::string ISOLATED_RECEIVER_SCRIPT = "./start_isolated_test.sh";
+        std::string RECEIVER_INTERFACE = CAPRICA_INTERFACE;
+        std::string SENDER_IP = GALACTICA;
+        std::string CLEANUP_PCAPS_SCRIPT = "cleanup_pcaps_and_csvs.py";
+        std::string CLEANUP_PCAPS_SCRIPT_PATH = CLEANUP_PCAPS_SCRIPT;
+        std::string SENDER_SCRIPT = "spawn_senders.sh";
+        std::string SENDER_SCRIPT_PATH = SENDER_SCRIPT;
+        std::string TC_CONFIG_SCRIPT = "config.sh";
+        std::string TC_CONFIG_SCRIPT_PATH = TC_CONFIG_SCRIPT;
+        std::string PCAP2CSV_SCRIPT = "pcap2csv.sh";
+        std::string PCAP2CSV_SCRIPT_PATH = PCAP2CSV_SCRIPT;
+        std::vector<std::string> PROCESS_CSV_SCRIPTS  { "plot_unfairness.py", "get_sending_rates.py" };
+        std::vector<std::string> PROCESS_CSV_SCRIPT_PATHS = PROCESS_CSV_SCRIPTS;
+        int BUFF_SIZE = 1  ;
+        int NUM_TOTAL_FLOWS = 10;
+        int BANDWIDTH = 50  ;
+        std::vector<int> RTTS { 20, 50, 100 };
+        int DURATION = 60  ;
+        double WINDOW_TIME_LENGTH = 0.5  ;
+        int MOVING_STRIDE = 1  ;
+        std::string FIGURE_FILETYPE = "png";
+        std::string UNFAIRNESS_FIGURE_TITLE = "BBR\"s Throughput Unfairness Ratio vs. Share of BBR on Various Bandwidths";
+        std::string CSV_FOLDER_PATH = PCAPS_FOLDER_PATH;
+        int FIGURE_DPI = 100;
+
+        vector<string> BIT_PATTERNS;
+        vector<BitPattern> RUNNING_ALGO_RTTS;
+};
+
+set<vector<char>> combination_with_repetition(string s, int p) {
+  if (s == "") {
+    set<vector<char>> res;
+    return res;
+  }
+
+  if (p == 0) {
+    set<vector<char>> res { {} };
+    return res;
+  }
+
+  // All combinations without the first element
+  set<vector<char>> res1 = combination_with_repetition(s.substr(1), p);
+  
+  set<vector<char>> temp = combination_with_repetition(s, p - 1);
+  set<vector<char>> res2;
+  for (vector<char> v : temp) {
+    v.insert(v.begin(), s[0]);
+    res2.insert(v);
+  }
+
+  res1.insert(res2.begin(), res2.end());
+  return res1;
+}
+
+vector<string> get_bit_patterns(vector<int> partition) {
+  vector<set<vector<char>>> all_bit_sets;
+
+  for (uint i = 0; i < partition.size(); i++) {
+    int p = partition[i];
+    set<vector<char>> bit_set = combination_with_repetition("BC", p);
+    all_bit_sets.push_back(bit_set);
+  }
+
+  vector<string> bit_patterns;
+  for (auto i : all_bit_sets[0]) {
+    for (auto j : all_bit_sets[1]) {
+      for (auto k : all_bit_sets[2]) {
+        stringstream ss;
+        for (char c : i) ss << c;
+        for (char c : j) ss << c;
+        for (char c : k) ss << c;
+        bit_patterns.push_back(ss.str());
+      }
+    }
+  }
+  return bit_patterns;
+}
+
+vector<BitPattern> get_running_algo_rtts(vector<string> bit_patterns, vector<int> partition, vector<int> rtts) {
+  vector<BitPattern> running_algo_rtts;
+
+  for (string bit_pattern : bit_patterns) {
+    BitPattern running_algo_rtt;
+    running_algo_rtt["BBR"] = vector<int>();
+    running_algo_rtt["CUBIC"] = vector<int>();
+    int start = 0;
+    for (uint i = 0; i < partition.size(); i++) {
+      int p = partition[i];
+
+      string sub_p = bit_pattern.substr(start, p);
+      uint num_b = 0, num_c = 0;
+      for (char c : sub_p) {
+        if (c == 'B') num_b++;
+        if (c == 'C') num_c++;
+      }
+      for (uint j = 0; j < num_b; j++) running_algo_rtt["BBR"].push_back(rtts[i]);
+      for (uint j = 0; j < num_c; j++) running_algo_rtt["CUBIC"].push_back(rtts[i]);
+
+      start += p;
+    }
+    running_algo_rtts.push_back(running_algo_rtt);
+  }
+  return running_algo_rtts;
+}
+
+void run_single_experiment(
+  std::string experiment_name,
+  std::vector<int> bandwidths,
+  std::vector<double> buffer_sizes,
+  std::vector<int> rtts,
+  std::vector<std::string> algos,
+  int flow_duration,
+  int num_total_flows,
+  vector<int> partition
+) {
+  ParetoConf ex_conf;
+  ex_conf.RTTS = rtts;
+  ex_conf.DURATION = flow_duration;
+  ex_conf.NUM_TOTAL_FLOWS = num_total_flows;
+
+  vector<string> bit_patterns = get_bit_patterns(partition);
+  vector<BitPattern> running_algo_rtts = get_running_algo_rtts(bit_patterns, partition, rtts);
+  ex_conf.BIT_PATTERNS = bit_patterns;
+  ex_conf.RUNNING_ALGO_RTTS = running_algo_rtts;
+
+  int i = 0;
+  for (int bandwidth : bandwidths) {
+    for (double buffer_size : buffer_sizes) {
+      i++;
+
+      ex_conf.BANDWIDTH = bandwidth;
+      ex_conf.BUFF_SIZE = buffer_size;
+    }
+  }
+}
+
+
+void run_multi_experiment(
+  std::string experiment_name,
+  int num_runs,
+  std::vector<int> bandwidths,
+  std::vector<double> buffer_sizes,
+  std::vector<int> rtts,
+  std::vector<std::string> algos,
+  int flow_duration,
+  int num_total_flows,
+  int start_run_num,
+  vector<BitPattern> bit_patterns,
+  vector<int> partition
+) {
+  int i_run = start_run_num - 1;
+  while (num_runs > 0) {
+    num_runs--;
+    i_run++;
+
+    run_single_experiment(
+      experiment_name,
+      bandwidths,
+      buffer_sizes,
+      rtts,
+      algos,
+      flow_duration,
+      num_total_flows,
+      partition
+    );
+  }
+}
+
+void run_experiment(
+  std::string experiment_name,
+  int num_runs,
+  std::vector<int> bandwidths,
+  std::vector<double> buffer_sizes,
+  std::vector<int> rtts,
+  std::vector<std::string> algos,
+  bool debug = false,
+  int flow_duration = 60,
+  int num_total_flows = 6,
+  int start_run_num = 1,
+  vector<BitPattern> bit_patterns = vector<BitPattern>(),
+  vector<int> partition = vector<int>()
+) {
+  if (partition.empty()) {
+    for (int i = 0; i < 3; i++) {
+      partition.push_back(num_total_flows / 3);
+    }
+  }
+
+  run_multi_experiment(
+    experiment_name,
+    num_runs,
+    bandwidths,
+    buffer_sizes,
+    rtts,
+    algos,
+    flow_duration,
+    num_total_flows,
+    start_run_num,
+    bit_patterns,
+    partition
+  );
+}
+
+void run_pareto_multi_rtt_6flow() {
+  std::string experimentName = "pareto_multi_rtt_6flow_20mbps";
+  int numRuns = 3;
+  std::vector<std::string> algos { "Cubic", "Bbr" };
+  std::vector<int> RTTs { 40, 80, 120 };
+  std::vector<int> bandWidths { 20 };
+  std::vector<double> bufferSizes { 0.5, 1, 3, 5, 10 };
+  int flowDuration = 60 * 2;
+  run_experiment(experimentName, numRuns, bandWidths, bufferSizes, RTTs, algos, false, flowDuration);
+}
+
+int main(int argc, char **argv) {
+  run_pareto_multi_rtt_6flow();
 }
