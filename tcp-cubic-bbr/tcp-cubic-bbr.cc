@@ -92,90 +92,90 @@ class ParetoConf {
 };
 
 class ClientApp: public Application {
-	private:
-		virtual void StartApplication(void);
-		virtual void StopApplication(void);
+  private:
+    virtual void StartApplication(void);
+    virtual void StopApplication(void);
 
-		void ScheduleTx(void);
-		void SendPacket(void);
+    void ScheduleTx(void);
+    void SendPacket(void);
 
-		Ptr<Socket>     mSocket;
-		Address         mPeer;
-		uint32_t        mPacketSize;
-		uint32_t        mNPackets;
-		DataRate        mDataRate;
-		EventId         mSendEvent;
-		bool            mRunning;
-		uint32_t        mPacketsSent;
+    Ptr<Socket>     mSocket;
+    Address         mPeer;
+    uint32_t        mPacketSize;
+    uint32_t        mNPackets;
+    DataRate        mDataRate;
+    EventId         mSendEvent;
+    bool            mRunning;
+    uint32_t        mPacketsSent;
 
-	public:
-		ClientApp();
-		virtual ~ClientApp();
+  public:
+    ClientApp();
+    virtual ~ClientApp();
 
-		void Setup(Ptr<Socket> socket, Address address, uint packetSize, uint nPackets, DataRate dataRate);
+    void Setup(Ptr<Socket> socket, Address address, uint packetSize, uint nPackets, DataRate dataRate);
 
 };
 
 ClientApp::ClientApp(): mSocket(0),
-		    mPeer(),
-		    mPacketSize(0),
-		    mNPackets(0),
-		    mDataRate(0),
-		    mSendEvent(),
-		    mRunning(false),
-		    mPacketsSent(0) {
+        mPeer(),
+        mPacketSize(0),
+        mNPackets(0),
+        mDataRate(0),
+        mSendEvent(),
+        mRunning(false),
+        mPacketsSent(0) {
 }
 
 ClientApp::~ClientApp() {
-	mSocket = 0;
+  mSocket = 0;
 }
 
 void ClientApp::Setup(Ptr<Socket> socket, Address address, uint packetSize, uint nPackets, DataRate dataRate) {
-	mSocket = socket;
-	mPeer = address;
-	mPacketSize = packetSize;
-	mNPackets = nPackets;
-	mDataRate = dataRate;
+  mSocket = socket;
+  mPeer = address;
+  mPacketSize = packetSize;
+  mNPackets = nPackets;
+  mDataRate = dataRate;
 }
 
 void ClientApp::StartApplication() {
-	mRunning = true;
-	mPacketsSent = 0;
-	mSocket->Bind();
-	mSocket->Connect(mPeer);
-	SendPacket();
+  mRunning = true;
+  mPacketsSent = 0;
+  mSocket->Bind();
+  mSocket->Connect(mPeer);
+  SendPacket();
 }
 
 void ClientApp::StopApplication() {
-	mRunning = false;
-	if(mSendEvent.IsRunning()) {
-		Simulator::Cancel(mSendEvent);
-	}
-	if(mSocket) {
-		mSocket->Close();
-	}
+  mRunning = false;
+  if(mSendEvent.IsRunning()) {
+    Simulator::Cancel(mSendEvent);
+  }
+  if(mSocket) {
+    mSocket->Close();
+  }
 }
 
 void ClientApp::SendPacket() {
-	Ptr<Packet> packet = Create<Packet>(mPacketSize);
-	mSocket->Send(packet);
+  Ptr<Packet> packet = Create<Packet>(mPacketSize);
+  mSocket->Send(packet);
 
-	// if(++mPacketsSent < mNPackets) {
-	// 	ScheduleTx();
-	// }
+  // if(++mPacketsSent < mNPackets) {
+  //   ScheduleTx();
+  // }
 
   mPacketsSent++;
   ScheduleTx();
 }
 
 void ClientApp::ScheduleTx() {
-	if (mRunning) {
-		Time tNext(Seconds(mPacketSize*8/static_cast<double>(mDataRate.GetBitRate())));
-		mSendEvent = Simulator::Schedule(tNext, &ClientApp::SendPacket, this);
-		//double tVal = Simulator::Now().GetSeconds();
-		//if(tVal-int(tVal) >= 0.99)
-		//	cout << Simulator::Now ().GetSeconds () << "\t" << mPacketsSent << endl;
-	}
+  if (mRunning) {
+    Time tNext(Seconds(mPacketSize*8/static_cast<double>(mDataRate.GetBitRate())));
+    mSendEvent = Simulator::Schedule(tNext, &ClientApp::SendPacket, this);
+    //double tVal = Simulator::Now().GetSeconds();
+    //if(tVal-int(tVal) >= 0.99)
+    //  cout << Simulator::Now ().GetSeconds () << "\t" << mPacketsSent << endl;
+  }
 }
 
 vector<uint64_t> mapPacketsReceivedIPV4;
@@ -195,33 +195,33 @@ RttTracer (uint key, string context, Time oldval, Time newval)
 }
 
 Ptr<Socket> uniFlow(Address sinkAddress, 
-					uint sinkPort, 
-					string tcpVariant, 
-					Ptr<Node> hostNode, 
-					Ptr<Node> sinkNode, 
-					double startTime, 
-					double stopTime,
-					uint packetSize,
-					uint numPackets,
-					string dataRate,
-					double appStartTime,
-					double appStopTime,
+          uint sinkPort, 
+          string tcpVariant, 
+          Ptr<Node> hostNode, 
+          Ptr<Node> sinkNode, 
+          double startTime, 
+          double stopTime,
+          uint packetSize,
+          uint numPackets,
+          string dataRate,
+          double appStartTime,
+          double appStopTime,
           uint buff_size) {
 
-	// if(tcpVariant.compare(TCP_BBR) == 0) {
-	// 	Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
-	// } else if(tcpVariant.compare(TCP_CUBIC) == 0) {
-	// 	Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
-	// } else {
-	// 	fprintf(stderr, "Invalid TCP version\n");
-	// 	exit(EXIT_FAILURE);
-	// }
-	PacketSinkHelper packetSinkHelper("ns3::TcpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), sinkPort));
-	ApplicationContainer sinkApps = packetSinkHelper.Install(sinkNode);
-	sinkApps.Start(Seconds(startTime));
-	sinkApps.Stop(Seconds(stopTime));
+  // if(tcpVariant.compare(TCP_BBR) == 0) {
+  //   Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
+  // } else if(tcpVariant.compare(TCP_CUBIC) == 0) {
+  //   Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
+  // } else {
+  //   fprintf(stderr, "Invalid TCP version\n");
+  //   exit(EXIT_FAILURE);
+  // }
+  PacketSinkHelper packetSinkHelper("ns3::TcpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), sinkPort));
+  ApplicationContainer sinkApps = packetSinkHelper.Install(sinkNode);
+  sinkApps.Start(Seconds(startTime));
+  sinkApps.Stop(Seconds(stopTime));
 
-	// Ptr<Socket> ns3TcpSocket = Socket::CreateSocket(hostNode, TcpSocketFactory::GetTypeId()); // this doesn't work, it always creates TCP new reno :(
+  // Ptr<Socket> ns3TcpSocket = Socket::CreateSocket(hostNode, TcpSocketFactory::GetTypeId()); // this doesn't work, it always creates TCP new reno :(
   // Hack src/internet/wscript to include tcp-socket-factory-impl and Hack src/internet/model/tcp-socket-factory-impl.h to make m_tcp public 
   Ptr<TcpSocketFactoryImpl> socketFactory = hostNode->GetObject<TcpSocketFactoryImpl>(TcpSocketFactory::GetTypeId());
   
@@ -233,21 +233,21 @@ Ptr<Socket> uniFlow(Address sinkAddress,
     // ns-3.27 does not have TcpCubic yet - implementation is stolen from ns-3.33
     ns3TcpSocket = socketFactory->m_tcp->CreateSocket(TcpCubic::GetTypeId());
   } else {
-   	fprintf(stderr, "Invalid TCP version\n");
-		exit(EXIT_FAILURE); 
+     fprintf(stderr, "Invalid TCP version\n");
+    exit(EXIT_FAILURE); 
   }
 
   ns3TcpSocket->SetAttribute("SegmentSize", UintegerValue(packetSize)); // Do not fragment packets
   ns3TcpSocket->SetAttribute("SndBufSize", UintegerValue(buff_size)); // Transmit buffer size
   ns3TcpSocket->SetAttribute("RcvBufSize", UintegerValue(buff_size)); // Receiver buffer size
 
-	Ptr<ClientApp> app = CreateObject<ClientApp>();
-	app->Setup(ns3TcpSocket, sinkAddress, packetSize, numPackets, DataRate(dataRate));
-	hostNode->AddApplication(app);
-	app->SetStartTime(Seconds(appStartTime));
-	app->SetStopTime(Seconds(appStopTime));
+  Ptr<ClientApp> app = CreateObject<ClientApp>();
+  app->Setup(ns3TcpSocket, sinkAddress, packetSize, numPackets, DataRate(dataRate));
+  hostNode->AddApplication(app);
+  app->SetStartTime(Seconds(appStartTime));
+  app->SetStopTime(Seconds(appStopTime));
 
-	return ns3TcpSocket;
+  return ns3TcpSocket;
 }
 
 void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos, vector<int> rtts, double buff_bdp, int bandwidth) {
@@ -263,32 +263,32 @@ void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos,
     }
   }
 
-	string rateHR = "10000Mbps"; // infinitely fast
-	// string latencyHR = "20ms";
+  string rateHR = "10000Mbps"; // infinitely fast
+  // string latencyHR = "20ms";
 
   stringstream rateRRstream;
   rateRRstream << bandwidth << "Mbps";
-	string rateRR = rateRRstream.str();
-	string latencyRR = "50ms";
-	// double errorP = ERROR;
+  string rateRR = rateRRstream.str();
+  string latencyRR = "50ms";
+  // double errorP = ERROR;
 
-	string transferSpeed = "5Mbps";
+  string transferSpeed = "5Mbps";
 
-	double flowStart = 0;
-	double durationGap = 120;
+  double flowStart = 0;
+  double durationGap = 120;
 
-	uint basePort = 10086; // Base port
-	uint numPackets = 10000000;
+  uint basePort = 10086; // Base port
+  uint numPackets = 10000000;
 
-	uint packetSize = 1446;		// 1446 + 54 = 1500 Bytes
+  uint packetSize = 1446;    // 1446 + 54 = 1500 Bytes
   // uint queueSizeHRBytes = 20 * 100000;
 
   double maxRTT = *max_element(rtts.begin(), rtts.end());
   uint buff_size = buff_bdp * maxRTT * bandwidth * 1000 / 8;
   // uint queueSizeRRBytes = buff_size * maxRTT * bandwidth * 1000 / 8;
 
-	// uint queueSizeHR = queueSizeHRBytes / packetSize;
-	// uint queueSizeRR = queueSizeRRBytes / packetSize;
+  // uint queueSizeHR = queueSizeHRBytes / packetSize;
+  // uint queueSizeRR = queueSizeRRBytes / packetSize;
 
   // cout <<
   //   "Number of Flows:" << endl <<
@@ -300,7 +300,7 @@ void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos,
   //   "Router <-> Router:" << endl <<
   //   "   Data Rate: " << rateRR << " | Latency: " << latencyRR << " | Queue Size: " << queueSizeRR << " packets (" << queueSizeRRBytes << " bytes) | Error Rate: " << errorP << endl;
 
-	// Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
+  // Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
 
 
   // Create RTTs file
@@ -335,8 +335,8 @@ void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos,
   // Create Router <-> Router links
   PointToPointHelper p2pRR;
   p2pRR.SetDeviceAttribute("DataRate", StringValue(rateRR));
-	p2pRR.SetChannelAttribute("Delay", StringValue(latencyRR));
-	// p2pRR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
+  p2pRR.SetChannelAttribute("Delay", StringValue(latencyRR));
+  // p2pRR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
 
   NetDeviceContainer routerDevices = p2pRR.Install(routers);
 
@@ -386,22 +386,22 @@ void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos,
     }
   }
 
-	//Install Internet Stack
-	cout << "Install Internet Stack" << endl;;
-	InternetStackHelper stack;
-	stack.Install(routers);
-	stack.Install(senders);
-	stack.Install(receivers);
+  //Install Internet Stack
+  cout << "Install Internet Stack" << endl;;
+  InternetStackHelper stack;
+  stack.Install(routers);
+  stack.Install(senders);
+  stack.Install(receivers);
 
-	//Adding IP addresses
-	cout << "Adding IP addresses" << endl;;
-	Ipv4AddressHelper routerIP = Ipv4AddressHelper("10.3.0.0", "255.255.255.0");
-	Ipv4AddressHelper senderIP = Ipv4AddressHelper("10.1.0.0", "255.255.255.0");
-	Ipv4AddressHelper receiverIP = Ipv4AddressHelper("10.2.0.0", "255.255.255.0");
+  //Adding IP addresses
+  cout << "Adding IP addresses" << endl;;
+  Ipv4AddressHelper routerIP = Ipv4AddressHelper("10.3.0.0", "255.255.255.0");
+  Ipv4AddressHelper senderIP = Ipv4AddressHelper("10.1.0.0", "255.255.255.0");
+  Ipv4AddressHelper receiverIP = Ipv4AddressHelper("10.2.0.0", "255.255.255.0");
 
-	Ipv4InterfaceContainer routerIFC, senderIFCs, receiverIFCs, leftRouterIFCs, rightRouterIFCs;
+  Ipv4InterfaceContainer routerIFC, senderIFCs, receiverIFCs, leftRouterIFCs, rightRouterIFCs;
 
-	routerIFC = routerIP.Assign(routerDevices);
+  routerIFC = routerIP.Assign(routerDevices);
 
   {
     uint nodeIndex = 0;
@@ -443,13 +443,13 @@ void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos,
     }
   }
 
-	//Turning on Static Global Routing
-	cout << "Turning on Static Global Routing" << endl;
-	Ipv4GlobalRoutingHelper::PopulateRoutingTables();
+  //Turning on Static Global Routing
+  cout << "Turning on Static Global Routing" << endl;
+  Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-	cout << "Simulation started" << endl;
-	Simulator::Stop(Seconds(durationGap+flowStart));
-	Simulator::Run();
+  cout << "Simulation started" << endl;
+  Simulator::Stop(Seconds(durationGap+flowStart));
+  Simulator::Run();
  
   // for (uint i = 0; i < numSender; i++) {
   //   cout << (i < nBbr ? TCP_BBR : TCP_CUBIC) << " #" << (i < nBbr ? i + 1: i % nBbr + 1) << endl; 
@@ -473,8 +473,8 @@ void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos,
   //   cout << "Delay: " << delay << "ms" << endl;
   // }
 
-	cout << "Simulation finished" << endl;
-	Simulator::Destroy();
+  cout << "Simulation finished" << endl;
+  Simulator::Destroy();
 }
 
 void run_this_throughput(ParetoConf config) {
