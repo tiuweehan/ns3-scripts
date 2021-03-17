@@ -25,9 +25,13 @@
 #include "ns3/point-to-point-module.h"
 #include "ns3/applications-module.h"
 #include "ns3/internet-module.h"
+#include "ns3/traffic-control-module.h"
+#include "ns3/tcp-socket-factory-impl.h"
+#include "ns3/net-device-queue-interface.h"
 #include "ns3/flow-monitor-module.h"
 #include "ns3/ipv4-global-routing-helper.h"
 #include "ns3/gnuplot.h"
+#include "unistd.h"
 
 typedef uint32_t uint;
 
@@ -40,6 +44,52 @@ using namespace ns3;
 #define ERROR 0.000001
 
 NS_LOG_COMPONENT_DEFINE ("TcpBbrCubic");
+
+typedef map<string, vector<int>> AlgoRTTs;
+
+class ParetoConf {
+  public:
+        string RESULT_FOLDER_PATH = "results-2dumps/";
+        string PCAPS_FOLDER_PATH = "pcaps-2dumps/" ;
+        string HYDRA = "10.0.0.1";
+        string NEMO = "10.0.0.2";
+        string NEMO_INTERFACE = "enp2s0";
+        string GALACTICA = "5.5.5.2";
+        string CAPRICA = "5.5.5.1";
+        string GALACTICA_INTERFACE = "enp7s4";
+        string CAPRICA_INTERFACE = "eth1";
+        string RECEIVER_IP = CAPRICA;
+        string RECEIVER_BASE_PORT = "10086"  ;
+        string RECEIVER_SCRIPT = "./start_test.sh";
+        string ISOLATED_RECEIVER_SCRIPT = "./start_isolated_test.sh";
+        string RECEIVER_INTERFACE = CAPRICA_INTERFACE;
+        string SENDER_IP = GALACTICA;
+        string CLEANUP_PCAPS_SCRIPT = "cleanup_pcaps_and_csvs.py";
+        string CLEANUP_PCAPS_SCRIPT_PATH = CLEANUP_PCAPS_SCRIPT;
+        string SENDER_SCRIPT = "spawn_senders.sh";
+        string SENDER_SCRIPT_PATH = SENDER_SCRIPT;
+        string TC_CONFIG_SCRIPT = "config.sh";
+        string TC_CONFIG_SCRIPT_PATH = TC_CONFIG_SCRIPT;
+        string PCAP2CSV_SCRIPT = "pcap2csv.sh";
+        string PCAP2CSV_SCRIPT_PATH = PCAP2CSV_SCRIPT;
+        vector<string> PROCESS_CSV_SCRIPTS  { "plot_unfairness.py", "get_sending_rates.py" };
+        vector<string> PROCESS_CSV_SCRIPT_PATHS = PROCESS_CSV_SCRIPTS;
+        double BUFF_SIZE = 1  ;
+        int NUM_TOTAL_FLOWS = 10;
+        int BANDWIDTH = 50  ;
+        vector<int> RTTS { 20, 50, 100 };
+        int DURATION = 60  ;
+        double WINDOW_TIME_LENGTH = 0.5  ;
+        int MOVING_STRIDE = 1  ;
+        string FIGURE_FILETYPE = "png";
+        string UNFAIRNESS_FIGURE_TITLE = "BBR\"s Throughput Unfairness Ratio vs. Share of BBR on Various Bandwidths";
+        string CSV_FOLDER_PATH = PCAPS_FOLDER_PATH;
+        int FIGURE_DPI = 100;
+
+        vector<string> BIT_PATTERNS;
+        vector<AlgoRTTs> RUNNING_ALGO_RTTS;
+        vector<string> ALGOS { TCP_BBR, TCP_CUBIC };
+};
 
 class ClientApp: public Application {
 	private:
@@ -124,54 +174,72 @@ void ClientApp::ScheduleTx() {
 		mSendEvent = Simulator::Schedule(tNext, &ClientApp::SendPacket, this);
 		//double tVal = Simulator::Now().GetSeconds();
 		//if(tVal-int(tVal) >= 0.99)
-		//	std::cout << Simulator::Now ().GetSeconds () << "\t" << mPacketsSent << std::endl;
+		//	cout << Simulator::Now ().GetSeconds () << "\t" << mPacketsSent << endl;
 	}
 }
 
-std::vector<uint64_t> mapPacketsReceivedIPV4;
-std::vector<std::vector<Time>> mapRTT;  
+vector<uint64_t> mapPacketsReceivedIPV4;
+vector<vector<Time>> mapRTT;  
 
-void ReceivedPacket(std::string context, Ptr<const Packet> p, const Address& addr){
+void ReceivedPacket(string context, Ptr<const Packet> p, const Address& addr){
 }
 
-void ReceivedPacketIPV4(uint key, std::string context, Ptr<const Packet> p, Ptr<Ipv4> ipv4, uint interface) {
+void ReceivedPacketIPV4(uint key, string context, Ptr<const Packet> p, Ptr<Ipv4> ipv4, uint interface) {
   mapPacketsReceivedIPV4[key]++;
 }
 
 void
-RttTracer (uint key, std::string context, Time oldval, Time newval)
+RttTracer (uint key, string context, Time oldval, Time newval)
 {
   mapRTT[key].push_back(newval);
 }
 
 Ptr<Socket> uniFlow(Address sinkAddress, 
 					uint sinkPort, 
-					std::string tcpVariant, 
+					string tcpVariant, 
 					Ptr<Node> hostNode, 
 					Ptr<Node> sinkNode, 
 					double startTime, 
 					double stopTime,
 					uint packetSize,
 					uint numPackets,
-					std::string dataRate,
+					string dataRate,
 					double appStartTime,
-					double appStopTime) {
+					double appStopTime,
+          uint buff_size) {
 
-	if(tcpVariant.compare(TCP_BBR) == 0) {
-		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
-	} else if(tcpVariant.compare(TCP_CUBIC) == 0) {
-		Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
-	} else {
-		fprintf(stderr, "Invalid TCP version\n");
-		exit(EXIT_FAILURE);
-	}
+	// if(tcpVariant.compare(TCP_BBR) == 0) {
+	// 	Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpBbr::GetTypeId()));
+	// } else if(tcpVariant.compare(TCP_CUBIC) == 0) {
+	// 	Config::SetDefault("ns3::TcpL4Protocol::SocketType", TypeIdValue(TcpCubic::GetTypeId()));
+	// } else {
+	// 	fprintf(stderr, "Invalid TCP version\n");
+	// 	exit(EXIT_FAILURE);
+	// }
 	PacketSinkHelper packetSinkHelper("ns3::TcpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), sinkPort));
 	ApplicationContainer sinkApps = packetSinkHelper.Install(sinkNode);
 	sinkApps.Start(Seconds(startTime));
 	sinkApps.Stop(Seconds(stopTime));
 
-	Ptr<Socket> ns3TcpSocket = Socket::CreateSocket(hostNode, TcpSocketFactory::GetTypeId());
-	
+	// Ptr<Socket> ns3TcpSocket = Socket::CreateSocket(hostNode, TcpSocketFactory::GetTypeId()); // this doesn't work, it always creates TCP new reno :(
+  // Hack src/internet/wscript to include tcp-socket-factory-impl and Hack src/internet/model/tcp-socket-factory-impl.h to make m_tcp public 
+  Ptr<TcpSocketFactoryImpl> socketFactory = hostNode->GetObject<TcpSocketFactoryImpl>(TcpSocketFactory::GetTypeId());
+  
+  Ptr<Socket> ns3TcpSocket;
+  if (tcpVariant.compare(TCP_BBR) == 0) {
+    // BBR not compatible with ns-3.33
+    ns3TcpSocket = socketFactory->m_tcp->CreateSocket(TcpBbr::GetTypeId());
+  } else if (tcpVariant.compare(TCP_CUBIC) == 0) {
+    // ns-3.27 does not have TcpCubic yet - implementation is stolen from ns-3.33
+    ns3TcpSocket = socketFactory->m_tcp->CreateSocket(TcpCubic::GetTypeId());
+  } else {
+   	fprintf(stderr, "Invalid TCP version\n");
+		exit(EXIT_FAILURE); 
+  }
+
+  ns3TcpSocket->SetAttribute("SegmentSize", UintegerValue(packetSize)); // Do not fragment packets
+  ns3TcpSocket->SetAttribute("SndBufSize", UintegerValue(buff_size)); // Transmit buffer size
+  ns3TcpSocket->SetAttribute("RcvBufSize", UintegerValue(buff_size)); // Receiver buffer size
 
 	Ptr<ClientApp> app = CreateObject<ClientApp>();
 	app->Setup(ns3TcpSocket, sinkAddress, packetSize, numPackets, DataRate(dataRate));
@@ -182,115 +250,151 @@ Ptr<Socket> uniFlow(Address sinkAddress,
 	return ns3TcpSocket;
 }
 
-int start(int argc, char **argv) {
-  uint nBbr = 3;
-  uint nCubic = 3;
+void start(AlgoRTTs running_algo_rtts, string bit_pattern, vector<string> algos, vector<int> rtts, double buff_bdp, int bandwidth) {
+  uint nBbr = running_algo_rtts[TCP_BBR].size();
+  uint nCubic = running_algo_rtts[TCP_CUBIC].size();
+  uint numSender = nBbr + nCubic;
 
-	std::string rateHR = "100Mbps";
-	std::string latencyHR = "20ms";
-	std::string rateRR = "10Mbps";
-	std::string latencyRR = "50ms";
-	double errorP = ERROR;
+  // map of RTT to count of nBBr and nCubic for each RTT
+  map<int, map<string, uint>> rttCounts;
+  for (string algo : algos) {
+    for (int rtt : running_algo_rtts[algo]) {
+      rttCounts[rtt][algo]++;
+    }
+  }
 
-	std::string transferSpeed = "400Mbps";
+	string rateHR = "10000Mbps"; // infinitely fast
+	// string latencyHR = "20ms";
+
+  stringstream rateRRstream;
+  rateRRstream << bandwidth << "Mbps";
+	string rateRR = rateRRstream.str();
+	string latencyRR = "50ms";
+	// double errorP = ERROR;
+
+	string transferSpeed = "5Mbps";
 
 	double flowStart = 0;
 	double durationGap = 120;
 
-	uint port = 9000;
+	uint basePort = 10086; // Base port
 	uint numPackets = 10000000;
 
-	uint packetSize = 1.2 * 1024;		//1.2KB
-  uint queueSizeHRBytes = 20 * 100000;
-  uint queueSizeRRBytes = 10000 * 50;
+	uint packetSize = 1446;		// 1446 + 54 = 1500 Bytes
+  // uint queueSizeHRBytes = 20 * 100000;
 
-  CommandLine cmd;
-  cmd.AddValue ("nBbr", "Number of BBR flows", nBbr);
-  cmd.AddValue ("nCubic", "Number of Cubic", nCubic);
+  double maxRTT = *max_element(rtts.begin(), rtts.end());
+  uint buff_size = buff_bdp * maxRTT * bandwidth * 1000 / 8;
+  // uint queueSizeRRBytes = buff_size * maxRTT * bandwidth * 1000 / 8;
 
-  cmd.AddValue("packetSize", "Size of packets sent (in bytes)", packetSize);
-  cmd.AddValue ("duration", "Duration to run the simulation (in seconds)", durationGap);
-  cmd.AddValue ("transferSpeed", "Application data rate", transferSpeed);
+	// uint queueSizeHR = queueSizeHRBytes / packetSize;
+	// uint queueSizeRR = queueSizeRRBytes / packetSize;
 
-  cmd.AddValue ("rateHR", "Data rate between hosts and router", rateHR);
-  cmd.AddValue ("latencyHR", "Latency between hosts and router", latencyHR);
-  cmd.AddValue ("rateRR", "Data rate between routers", rateRR);
-  cmd.AddValue ("latencyRR", "Latency between routers", latencyRR);
-  cmd.AddValue ("queueSizeHR", "Size of queue between hosts and router (in bytes)", queueSizeHRBytes);
-  cmd.AddValue ("queueSizeRR", "Size of queue between rouers (in bytes)", queueSizeRRBytes);
-  cmd.AddValue ("errorRR", "Error rate of link between routers", errorP);
+  // cout <<
+  //   "Number of Flows:" << endl <<
+  //   "   BBR Flows: " << nBbr << " | Cubic Flows: " << nCubic << " | Total Flows: " << numSender << endl <<
+  //   "Application:" << endl <<
+  //   "   Packet Size: " << packetSize << " bytes | Send Rate: " << transferSpeed << " | Duration: " << durationGap << " seconds" << endl <<
+  //   "Host <-> Router:" << endl <<
+  //   "   Data Rate: " << rateHR << " | Queue Size: " << queueSizeHR << " packets (" << queueSizeHRBytes << " bytes)" << endl <<
+  //   "Router <-> Router:" << endl <<
+  //   "   Data Rate: " << rateRR << " | Latency: " << latencyRR << " | Queue Size: " << queueSizeRR << " packets (" << queueSizeRRBytes << " bytes) | Error Rate: " << errorP << endl;
 
-  cmd.Parse (argc, argv);
-  
-  if (nBbr == 0) nBbr = 1;
-  if (nCubic == 0) nCubic = 1;
-	uint numSender = nBbr + nCubic;
-  mapPacketsReceivedIPV4.resize(numSender);
-  mapRTT.resize(numSender);
+	// Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
 
-	uint queueSizeHR = queueSizeHRBytes / packetSize;
-	uint queueSizeRR = queueSizeRRBytes / packetSize;
 
-  std::cout <<
-    "Number of Flows:" << std::endl <<
-    "   BBR Flows: " << nBbr << " | Cubic Flows: " << nCubic << " | Total Flows: " << numSender << std::endl <<
-    "Application:" << std::endl <<
-    "   Packet Size: " << packetSize << " bytes | Send Rate: " << transferSpeed << " | Duration: " << durationGap << " seconds" << std::endl <<
-    "Host <-> Router:" << std::endl <<
-    "   Data Rate: " << rateHR << " | Latency: " << latencyHR << " | Queue Size: " << queueSizeHR << " packets (" << queueSizeHRBytes << " bytes)" << std::endl <<
-    "Router <-> Router:" << std::endl <<
-    "   Data Rate: " << rateRR << " | Latency: " << latencyRR << " | Queue Size: " << queueSizeRR << " packets (" << queueSizeRRBytes << " bytes) | Error Rate: " << errorP << std::endl;
+  // Create RTTs file
+  stringstream rtts_filename_stream;
+  rtts_filename_stream << bit_pattern << ".rtt.csv";
+  string rtts_filename = rtts_filename_stream.str();
+  ofstream rtts_file;
+  rtts_file.open(rtts_filename);
+  rtts_file << "srcipaddr destipaddr portnum rtt algo"<< endl;
+  {
+     uint nodeIndex = 0;
+     for (int rtt : rtts) {
+       for (string algo : algos) {
+         uint algosCount = rttCounts[rtt][algo];
+         for (uint i = 0; i < algosCount; i++, nodeIndex++) {
+           int portNum = basePort + nodeIndex;
+           rtts_file << "10.1." << nodeIndex << ".1" << " "; // Source IP
+           rtts_file << "10.2." << nodeIndex << ".1" << " "; // Destination IP
+           rtts_file << portNum << " " << rtt << " " << (algo == TCP_BBR ? "BBR" : "CUBIC" ) << endl;
+         }
+       }
+     } 
+  }
+  rtts_file.close();
 
-	Config::SetDefault("ns3::QueueBase::Mode", StringValue("QUEUE_MODE_PACKETS"));
-    /*
-    Config::SetDefault("ns3::DropTailQueue::MaxPackets", UintegerValue(queuesize));
-	*/
+  // Create Nodes
+  NodeContainer routers, senders, receivers;
+  routers.Create(2);
+  senders.Create(numSender);
+  receivers.Create(numSender);
 
-	//Creating channel without IP address
-  std::cout << "Creating channel without IP address" << std::endl;
-	PointToPointHelper p2pHR, p2pRR;
-	p2pHR.SetDeviceAttribute("DataRate", StringValue(rateHR));
-	p2pHR.SetChannelAttribute("Delay", StringValue(latencyHR));
-	p2pHR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeHR));
-	p2pRR.SetDeviceAttribute("DataRate", StringValue(rateRR));
+  // Create Router <-> Router links
+  PointToPointHelper p2pRR;
+  p2pRR.SetDeviceAttribute("DataRate", StringValue(rateRR));
 	p2pRR.SetChannelAttribute("Delay", StringValue(latencyRR));
-	p2pRR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
+	// p2pRR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeRR));
 
-	//Adding some error rate
-	std::cout << "Adding some error rate" << std::endl;
-	Ptr<RateErrorModel> em = CreateObjectWithAttributes<RateErrorModel> ("ErrorRate", DoubleValue (errorP));
+  NetDeviceContainer routerDevices = p2pRR.Install(routers);
 
-	NodeContainer routers, senders, receivers;
-	routers.Create(2);
-	senders.Create(numSender);
-	receivers.Create(numSender);
+  // Enable PCAP on sending Router        
+  stringstream pcap_filename_stream_all;
+  pcap_filename_stream_all << bit_pattern << "-nemo.pcap";
+  string pcap_filename_all = pcap_filename_stream_all.str();
+  p2pRR.EnablePcap(pcap_filename_all, routerDevices.Get(0), true, true);
 
-	NetDeviceContainer routerDevices = p2pRR.Install(routers);
-	NetDeviceContainer leftRouterDevices, rightRouterDevices, senderDevices, receiverDevices;
+  NetDeviceContainer leftRouterDevices, rightRouterDevices, senderDevices, receiverDevices;
+  {
+    uint nodeIndex = 0;
+    for (int rtt : rtts) {
+      // Create link with RTT delay
+      PointToPointHelper p2pHR;
+      p2pHR.SetDeviceAttribute("DataRate", StringValue(rateHR));
+      stringstream latencyHRstream;
+      latencyHRstream << (rtt / 4) << "ms"; // Divide by 4 as each packet goes through 4 links between router and host
+      string latencyHR = latencyHRstream.str();
+      p2pHR.SetChannelAttribute("Delay", StringValue(latencyHR));
+      // p2pHR.SetQueue("ns3::DropTailQueue", "MaxPackets", UintegerValue(queueSizeHR));
+      
+      for (string algo : algos) {
+        uint algoCount = rttCounts[rtt][algo];
+        // Create links for given RTT
+        for (uint i = 0; i < algoCount; i++, nodeIndex++) {
+          // Install links between sender and sending router
+          NetDeviceContainer cleft = p2pHR.Install(routers.Get(0), senders.Get(nodeIndex));
+          leftRouterDevices.Add(cleft.Get(0));
+          senderDevices.Add(cleft.Get(1));
 
-	//Adding links
-  std::cout << "Adding links" << std::endl;
-	for(uint i = 0; i < numSender; ++i) {
-		NetDeviceContainer cleft = p2pHR.Install(routers.Get(0), senders.Get(i));
-		leftRouterDevices.Add(cleft.Get(0));
-		senderDevices.Add(cleft.Get(1));
-		cleft.Get(0)->SetAttribute("ReceiveErrorModel", PointerValue(em));
+          // Install links between receiver and receiving router
+          NetDeviceContainer cright = p2pHR.Install(routers.Get(1), receivers.Get(nodeIndex));
+          rightRouterDevices.Add(cright.Get(0));
+          receiverDevices.Add(cright.Get(1));
 
-		NetDeviceContainer cright = p2pHR.Install(routers.Get(1), receivers.Get(i));
-		rightRouterDevices.Add(cright.Get(0));
-		receiverDevices.Add(cright.Get(1));
-		cright.Get(0)->SetAttribute("ReceiveErrorModel", PointerValue(em));
-	}
+          // PCAP tracing on sender
+          stringstream pcap_filename_stream;
+
+          // For RTT
+          // pcap_filename_stream << bit_pattern << "-" << rtt << "-mm.pcap";
+          pcap_filename_stream << bit_pattern << "-" << rtt << "-mm-" << nodeIndex << ".pcap";
+          string pcap_filename = pcap_filename_stream.str();
+          p2pHR.EnablePcap(pcap_filename, cleft.Get(1), true, true);
+        }
+      }
+    }
+  }
 
 	//Install Internet Stack
-	std::cout << "Install Internet Stack" << std::endl;;
+	cout << "Install Internet Stack" << endl;;
 	InternetStackHelper stack;
 	stack.Install(routers);
 	stack.Install(senders);
 	stack.Install(receivers);
 
 	//Adding IP addresses
-	std::cout << "Adding IP addresses" << std::endl;;
+	cout << "Adding IP addresses" << endl;;
 	Ipv4AddressHelper routerIP = Ipv4AddressHelper("10.3.0.0", "255.255.255.0");
 	Ipv4AddressHelper senderIP = Ipv4AddressHelper("10.1.0.0", "255.255.255.0");
 	Ipv4AddressHelper receiverIP = Ipv4AddressHelper("10.2.0.0", "255.255.255.0");
@@ -299,121 +403,107 @@ int start(int argc, char **argv) {
 
 	routerIFC = routerIP.Assign(routerDevices);
 
-	for(uint i = 0; i < numSender; ++i) {
-		NetDeviceContainer senderDevice;
-		senderDevice.Add(senderDevices.Get(i));
-		senderDevice.Add(leftRouterDevices.Get(i));
-		Ipv4InterfaceContainer senderIFC = senderIP.Assign(senderDevice);
-		senderIFCs.Add(senderIFC.Get(0));
-		leftRouterIFCs.Add(senderIFC.Get(1));
-		senderIP.NewNetwork();
+  {
+    uint nodeIndex = 0;
+    for (int rtt : rtts) {
+      for (string algo : algos) {
+        uint algoCount = rttCounts[rtt][algo];
+        for (uint i = 0; i < algoCount; i++, nodeIndex++) {
+          NetDeviceContainer senderDevice;
+          senderDevice.Add(senderDevices.Get(nodeIndex));
+          senderDevice.Add(leftRouterDevices.Get(nodeIndex));
+          Ipv4InterfaceContainer senderIFC = senderIP.Assign(senderDevice);
+          senderIFCs.Add(senderIFC.Get(0));
+          leftRouterIFCs.Add(senderIFC.Get(1));
+          senderIP.NewNetwork();
 
-		NetDeviceContainer receiverDevice;
-		receiverDevice.Add(receiverDevices.Get(i));
-		receiverDevice.Add(rightRouterDevices.Get(i));
-		Ipv4InterfaceContainer receiverIFC = receiverIP.Assign(receiverDevice);
-		receiverIFCs.Add(receiverIFC.Get(0));
-		rightRouterIFCs.Add(receiverIFC.Get(1));
-		receiverIP.NewNetwork();
-	}
+          NetDeviceContainer receiverDevice;
+          receiverDevice.Add(receiverDevices.Get(nodeIndex));
+          receiverDevice.Add(rightRouterDevices.Get(nodeIndex));
+          Ipv4InterfaceContainer receiverIFC = receiverIP.Assign(receiverDevice);
+          receiverIFCs.Add(receiverIFC.Get(0));
+          rightRouterIFCs.Add(receiverIFC.Get(1));
+          receiverIP.NewNetwork();
+        }
+      }
+    }
+  }
 
-	//TCP BBR
-  std::cout << "Creating TCP BBR Sockets" << std::endl;
-  for (uint i = 0; i < numSender; i++) {
-    std::string tcpProtocol = (i < nBbr ? TCP_BBR : TCP_CUBIC);
-
-    uniFlow(InetSocketAddress(receiverIFCs.GetAddress(i), port), port, tcpProtocol, senders.Get(i), receivers.Get(i), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap);
-
-    std::stringstream sink;
-    std::stringstream sink_;
-    sink << "/NodeList/" << receivers.Get(i)->GetId() << "/ApplicationList/0/$ns3::PacketSink/Rx";
-    Config::Connect(sink.str(), MakeCallback(&ReceivedPacket));
-    sink_ << "/NodeList/" << receivers.Get(i)->GetId() << "/$ns3::Ipv4L3Protocol/Rx";
-    Config::Connect(sink_.str(), MakeBoundCallback(&ReceivedPacketIPV4, i));
-
-    std::stringstream rttSink;
-    rttSink << "/NodeList/" << senders.Get(i)->GetId() << "/$ns3::TcpL4Protocol/SocketList/0/RTT";
-    Config::Connect(rttSink.str(), MakeBoundCallback(&RttTracer, i));
+  // Create applications
+  {
+    uint nodeIndex = 0;
+    for (int rtt : rtts) {
+      for (string algo : algos) {
+        uint algoCount = rttCounts[rtt][algo];
+        for (uint i = 0; i < algoCount; i++, nodeIndex++) {
+          int port = basePort + nodeIndex;
+          uniFlow(InetSocketAddress(receiverIFCs.GetAddress(nodeIndex), port), port, algo, senders.Get(nodeIndex), receivers.Get(nodeIndex), flowStart, flowStart+durationGap, packetSize, numPackets, transferSpeed, flowStart, flowStart+durationGap, buff_size);
+        }
+      }
+    }
   }
 
 	//Turning on Static Global Routing
-	std::cout << "Turning on Static Global Routing" << std::endl;
+	cout << "Turning on Static Global Routing" << endl;
 	Ipv4GlobalRoutingHelper::PopulateRoutingTables();
 
-	std::cout << "Simulation started" << std::endl;
+	cout << "Simulation started" << endl;
 	Simulator::Stop(Seconds(durationGap+flowStart));
 	Simulator::Run();
  
-  for (uint i = 0; i < numSender; i++) {
-    std::cout << (i < nBbr ? "BBR" : "Cubic") << " #" << (i < nBbr ? i + 1: i % nBbr + 1) << std::endl; 
+  // for (uint i = 0; i < numSender; i++) {
+  //   cout << (i < nBbr ? TCP_BBR : TCP_CUBIC) << " #" << (i < nBbr ? i + 1: i % nBbr + 1) << endl; 
     
-    double totalBytes = static_cast<double>(mapPacketsReceivedIPV4[i] * packetSize);
-    std::cout << "Total Bytes Sent: " << totalBytes << std::endl;;
+  //   double totalBytes = static_cast<double>(mapPacketsReceivedIPV4[i] * packetSize);
+  //   cout << "Total Bytes Sent: " << totalBytes << endl;;
     
-    // Throughput
-    double totalBits = static_cast<double>(totalBytes * 8);
-    double throughput = totalBits / durationGap;
-    throughput /= (1024 * 1024); // Convert to Mbps
-    std::cout << "Throughput: " << throughput << "Mbps" << std::endl;
+  //   // Throughput
+  //   double totalBits = static_cast<double>(totalBytes * 8);
+  //   double throughput = totalBits / durationGap;
+  //   throughput /= (1024 * 1024); // Convert to Mbps
+  //   cout << "Throughput: " << throughput << "Mbps" << endl;
 
-    // Delay    
-    double delay = 0.0;
-    for (Time t : mapRTT[i]) {
-      delay += t.GetNanoSeconds();
-    }
-    delay /= mapRTT[i].size();
-    delay /= 1e6; // Convert to miliseconds
-    std::cout << "Delay: " << delay << "ms" << std::endl;
-  }
+  //   // Delay    
+  //   double delay = 0.0;
+  //   for (Time t : mapRTT[i]) {
+  //     delay += t.GetNanoSeconds();
+  //   }
+  //   delay /= mapRTT[i].size();
+  //   delay /= 1e6; // Convert to miliseconds
+  //   cout << "Delay: " << delay << "ms" << endl;
+  // }
 
-	std::cout << "Simulation finished" << std::endl;
+	cout << "Simulation finished" << endl;
 	Simulator::Destroy();
 }
 
-typedef map<string, vector<int>> BitPattern;
+void run_this_throughput(ParetoConf config) {
+  for (uint i = 0; i < config.BIT_PATTERNS.size(); i++) {
+    AlgoRTTs running_algo_rtts = config.RUNNING_ALGO_RTTS[i];
+    string bit_pattern = config.BIT_PATTERNS[i];
 
-class ParetoConf {
-  public:
-        std::string RESULT_FOLDER_PATH = "results-2dumps/";
-        std::string PCAPS_FOLDER_PATH = "pcaps-2dumps/" ;
-        std::string HYDRA = "10.0.0.1";
-        std::string NEMO = "10.0.0.2";
-        std::string NEMO_INTERFACE = "enp2s0";
-        std::string GALACTICA = "5.5.5.2";
-        std::string CAPRICA = "5.5.5.1";
-        std::string GALACTICA_INTERFACE = "enp7s4";
-        std::string CAPRICA_INTERFACE = "eth1";
-        std::string RECEIVER_IP = CAPRICA;
-        std::string RECEIVER_BASE_PORT = "10086"  ;
-        std::string RECEIVER_SCRIPT = "./start_test.sh";
-        std::string ISOLATED_RECEIVER_SCRIPT = "./start_isolated_test.sh";
-        std::string RECEIVER_INTERFACE = CAPRICA_INTERFACE;
-        std::string SENDER_IP = GALACTICA;
-        std::string CLEANUP_PCAPS_SCRIPT = "cleanup_pcaps_and_csvs.py";
-        std::string CLEANUP_PCAPS_SCRIPT_PATH = CLEANUP_PCAPS_SCRIPT;
-        std::string SENDER_SCRIPT = "spawn_senders.sh";
-        std::string SENDER_SCRIPT_PATH = SENDER_SCRIPT;
-        std::string TC_CONFIG_SCRIPT = "config.sh";
-        std::string TC_CONFIG_SCRIPT_PATH = TC_CONFIG_SCRIPT;
-        std::string PCAP2CSV_SCRIPT = "pcap2csv.sh";
-        std::string PCAP2CSV_SCRIPT_PATH = PCAP2CSV_SCRIPT;
-        std::vector<std::string> PROCESS_CSV_SCRIPTS  { "plot_unfairness.py", "get_sending_rates.py" };
-        std::vector<std::string> PROCESS_CSV_SCRIPT_PATHS = PROCESS_CSV_SCRIPTS;
-        int BUFF_SIZE = 1  ;
-        int NUM_TOTAL_FLOWS = 10;
-        int BANDWIDTH = 50  ;
-        std::vector<int> RTTS { 20, 50, 100 };
-        int DURATION = 60  ;
-        double WINDOW_TIME_LENGTH = 0.5  ;
-        int MOVING_STRIDE = 1  ;
-        std::string FIGURE_FILETYPE = "png";
-        std::string UNFAIRNESS_FIGURE_TITLE = "BBR\"s Throughput Unfairness Ratio vs. Share of BBR on Various Bandwidths";
-        std::string CSV_FOLDER_PATH = PCAPS_FOLDER_PATH;
-        int FIGURE_DPI = 100;
+    sort(config.RTTS.begin(), config.RTTS.end());
 
-        vector<string> BIT_PATTERNS;
-        vector<BitPattern> RUNNING_ALGO_RTTS;
-};
+    start(running_algo_rtts, bit_pattern, config.ALGOS, config.RTTS, config.BUFF_SIZE, config.BANDWIDTH);
+
+    // Merge pcap files
+    for (int rtt : config.RTTS) {
+      stringstream merge_pcap_command;
+      // mergecap -w BBBBBB-40-mm.pcap BBBBBB-40-mm-*.pcap
+      merge_pcap_command << "mergecap -w " << bit_pattern << "-" << rtt << "-mm.pcap " << bit_pattern << "-" << rtt << "-mm-*.pcap";
+      system(merge_pcap_command.str().c_str());
+
+      // Remove original files
+      // stringstream remove_pcap_files_command;
+      // remove_pcap_files_command << "rm -rf " << bit_pattern << "-" << rtt << "-mm-*.pcap";
+      // system(remove_pcap_files_command.str().c_str());
+    }
+
+    // Convert to CSV TODO
+
+    // Remove PCAP files TODO
+  }
+}
 
 set<vector<char>> combination_with_repetition(string s, int p) {
   if (s == "") {
@@ -441,6 +531,7 @@ set<vector<char>> combination_with_repetition(string s, int p) {
 }
 
 vector<string> get_bit_patterns(vector<int> partition) {
+  // return vector<string> { "BCBCCB" };
   vector<set<vector<char>>> all_bit_sets;
 
   for (uint i = 0; i < partition.size(); i++) {
@@ -464,13 +555,13 @@ vector<string> get_bit_patterns(vector<int> partition) {
   return bit_patterns;
 }
 
-vector<BitPattern> get_running_algo_rtts(vector<string> bit_patterns, vector<int> partition, vector<int> rtts) {
-  vector<BitPattern> running_algo_rtts;
+vector<AlgoRTTs> get_running_algo_rtts(vector<string> bit_patterns, vector<int> partition, vector<int> rtts) {
+  vector<AlgoRTTs> running_algo_rtts;
 
   for (string bit_pattern : bit_patterns) {
-    BitPattern running_algo_rtt;
-    running_algo_rtt["BBR"] = vector<int>();
-    running_algo_rtt["CUBIC"] = vector<int>();
+    AlgoRTTs running_algo_rtt;
+    running_algo_rtt[TCP_BBR] = vector<int>();
+    running_algo_rtt[TCP_CUBIC] = vector<int>();
     int start = 0;
     for (uint i = 0; i < partition.size(); i++) {
       int p = partition[i];
@@ -481,8 +572,8 @@ vector<BitPattern> get_running_algo_rtts(vector<string> bit_patterns, vector<int
         if (c == 'B') num_b++;
         if (c == 'C') num_c++;
       }
-      for (uint j = 0; j < num_b; j++) running_algo_rtt["BBR"].push_back(rtts[i]);
-      for (uint j = 0; j < num_c; j++) running_algo_rtt["CUBIC"].push_back(rtts[i]);
+      for (uint j = 0; j < num_b; j++) running_algo_rtt[TCP_BBR].push_back(rtts[i]);
+      for (uint j = 0; j < num_c; j++) running_algo_rtt[TCP_CUBIC].push_back(rtts[i]);
 
       start += p;
     }
@@ -492,11 +583,11 @@ vector<BitPattern> get_running_algo_rtts(vector<string> bit_patterns, vector<int
 }
 
 void run_single_experiment(
-  std::string experiment_name,
-  std::vector<int> bandwidths,
-  std::vector<double> buffer_sizes,
-  std::vector<int> rtts,
-  std::vector<std::string> algos,
+  string experiment_name,
+  vector<int> bandwidths,
+  vector<double> buffer_sizes,
+  vector<int> rtts,
+  vector<string> algos,
   int flow_duration,
   int num_total_flows,
   vector<int> partition
@@ -507,7 +598,7 @@ void run_single_experiment(
   ex_conf.NUM_TOTAL_FLOWS = num_total_flows;
 
   vector<string> bit_patterns = get_bit_patterns(partition);
-  vector<BitPattern> running_algo_rtts = get_running_algo_rtts(bit_patterns, partition, rtts);
+  vector<AlgoRTTs> running_algo_rtts = get_running_algo_rtts(bit_patterns, partition, rtts);
   ex_conf.BIT_PATTERNS = bit_patterns;
   ex_conf.RUNNING_ALGO_RTTS = running_algo_rtts;
 
@@ -516,30 +607,56 @@ void run_single_experiment(
     for (double buffer_size : buffer_sizes) {
       i++;
 
+      // chdir to run folder
+      stringstream run_folder_name_stream;
+      run_folder_name_stream << bandwidth << "Mbps-" << buffer_size << "BDP-" << num_total_flows << "flows";
+      string run_folder_name = run_folder_name_stream.str();
+      stringstream mkdir_command_stream;
+      mkdir_command_stream << "mkdir -p " << run_folder_name;
+      string mkdir_command = mkdir_command_stream.str();
+      system(mkdir_command.c_str());
+      chdir(run_folder_name.c_str());
+
       ex_conf.BANDWIDTH = bandwidth;
       ex_conf.BUFF_SIZE = buffer_size;
+      ex_conf.ALGOS = algos;
+
+      run_this_throughput(ex_conf);
+
+      // chdir to parent folder
+      chdir("..");
     }
   }
 }
 
 
 void run_multi_experiment(
-  std::string experiment_name,
+  string experiment_name,
   int num_runs,
-  std::vector<int> bandwidths,
-  std::vector<double> buffer_sizes,
-  std::vector<int> rtts,
-  std::vector<std::string> algos,
+  vector<int> bandwidths,
+  vector<double> buffer_sizes,
+  vector<int> rtts,
+  vector<string> algos,
   int flow_duration,
   int num_total_flows,
   int start_run_num,
-  vector<BitPattern> bit_patterns,
+  vector<AlgoRTTs> bit_patterns,
   vector<int> partition
 ) {
   int i_run = start_run_num - 1;
   while (num_runs > 0) {
     num_runs--;
     i_run++;
+
+    // chdir to run folder
+    stringstream run_folder_name_stream;
+    run_folder_name_stream << "./run" << i_run;
+    string run_folder_name = run_folder_name_stream.str();
+    stringstream mkdir_command_stream;
+    mkdir_command_stream << "mkdir -p " << run_folder_name;
+    string mkdir_command = mkdir_command_stream.str();
+    system(mkdir_command.c_str());
+    chdir(run_folder_name.c_str());
 
     run_single_experiment(
       experiment_name,
@@ -551,21 +668,24 @@ void run_multi_experiment(
       num_total_flows,
       partition
     );
+
+    // chdir to parent folder
+    chdir("..");
   }
 }
 
 void run_experiment(
-  std::string experiment_name,
+  string experiment_name,
   int num_runs,
-  std::vector<int> bandwidths,
-  std::vector<double> buffer_sizes,
-  std::vector<int> rtts,
-  std::vector<std::string> algos,
+  vector<int> bandwidths,
+  vector<double> buffer_sizes,
+  vector<int> rtts,
+  vector<string> algos,
   bool debug = false,
   int flow_duration = 60,
   int num_total_flows = 6,
   int start_run_num = 1,
-  vector<BitPattern> bit_patterns = vector<BitPattern>(),
+  vector<AlgoRTTs> bit_patterns = vector<AlgoRTTs>(),
   vector<int> partition = vector<int>()
 ) {
   if (partition.empty()) {
@@ -590,12 +710,12 @@ void run_experiment(
 }
 
 void run_pareto_multi_rtt_6flow() {
-  std::string experimentName = "pareto_multi_rtt_6flow_20mbps";
-  int numRuns = 3;
-  std::vector<std::string> algos { "Cubic", "Bbr" };
-  std::vector<int> RTTs { 40, 80, 120 };
-  std::vector<int> bandWidths { 20 };
-  std::vector<double> bufferSizes { 0.5, 1, 3, 5, 10 };
+  string experimentName = "pareto_multi_rtt_6flow_20mbps";
+  int numRuns = 1;
+  vector<string> algos { TCP_BBR, TCP_CUBIC };
+  vector<int> RTTs { 40, 80, 120 };
+  vector<int> bandWidths { 20 };
+  vector<double> bufferSizes { 0.5, 1, 3, 5, 10 };
   int flowDuration = 60 * 2;
   run_experiment(experimentName, numRuns, bandWidths, bufferSizes, RTTs, algos, false, flowDuration);
 }
